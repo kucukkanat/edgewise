@@ -16,7 +16,7 @@ configure({
   // One model at a time keeps the browser tab and small CI runners within memory.
   maxLoadedModels: 1,
   ...(env.EDGEWISE_CACHE ? { cacheDir: env.EDGEWISE_CACHE } : {}),
-  ...(hub ? { hub: `${hub}/hf`, githubRaw: `${hub}/gh`, wasmPaths: `${hub}/cdn/npm/onnxruntime-web@${ORT_WEB}/dist/` } : {}),
+  ...(hub ? { hub: `${hub}/hf`, wasmPaths: `${hub}/cdn/npm/onnxruntime-web@${ORT_WEB}/dist/` } : {}),
 });
 
 /** `describe` when model tests are on, `describe.skip` otherwise. Unloads models afterwards to keep memory flat. */

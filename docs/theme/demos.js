@@ -3,7 +3,7 @@ const lib = import('../lib/index.js').then((m) => {
   const ew = m.default;
   // ?hub=http://host lets you point the demos at a mirror (used for testing the site offline).
   const hub = new URLSearchParams(location.search).get('hub');
-  if (hub) ew.configure({ hub: `${hub}/hf`, githubRaw: `${hub}/gh`, wasmPaths: `${hub}/cdn/npm/onnxruntime-web@${document.querySelector('meta[name="ort-web"]')?.content}/dist/` });
+  if (hub) ew.configure({ hub: `${hub}/hf`, wasmPaths: `${hub}/cdn/npm/onnxruntime-web@${document.querySelector('meta[name="ort-web"]')?.content}/dist/` });
   return ew;
 });
 const $ = (s, r = document) => r.querySelector(s);

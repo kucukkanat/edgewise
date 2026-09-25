@@ -5,7 +5,7 @@ working folders used for the original export; adjust them before re-running.
 
 | Script | Model | Output |
 | --- | --- | --- |
-| `chronos_export.py` | amazon/chronos-bolt-tiny, -small | the `models` branch of this repository |
+| `chronos_export.py` | amazon/chronos-bolt-tiny, -small | the `kucukkanat/edgewise-models` bucket |
 | `router_export.py`, `router_common.py`, `router_modeling.py`, `q8.py` | LiquidAI LFM2.5-Encoder-350M-Prompt-Router | the `kucukkanat/edgewise-models` bucket |
 | `pii_export.py` | LiquidAI LFM2.5-Encoder-350M-PII-Detector | the `kucukkanat/edgewise-models` bucket |
 | `*_parity.py`, `*_score.py`, `*_check.py`, `*_diag.py` | | compare ONNX outputs against the PyTorch originals |

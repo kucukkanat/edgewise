@@ -47,8 +47,7 @@ Real-model tests run each verb on Bun, Node and headless Chromium (WebGPU on Swi
 
 ## Offline and self-hosting
 
-- `configure({ hub })` points model downloads at a mirror of huggingface.co.
-- `configure({ githubRaw })` does the same for models Edgewise hosts on GitHub.
+- `configure({ hub })` points every model download, including the Edgewise bucket, at a mirror of huggingface.co.
 - `configure({ wasmPaths })` self-hosts ONNX Runtime's WebAssembly files.
 - On servers, set `EDGEWISE_CACHE` to a folder you ship with your app and call `preload()` at build time.
 

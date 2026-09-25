@@ -11,7 +11,6 @@ export function fileUrl(m: Manifest, rel: string): string {
     const sub = s.subfolder ? `${s.subfolder.replace(/\/$/, '')}/` : '';
     return `${hub}/${s.repo}/resolve/${s.revision}/${sub}${rel}`;
   }
-  if ('github' in s) return `${getConfig().githubRaw.replace(/\/$/, '')}/${s.github}/${s.revision}/${s.path.replace(/\/$/, '')}/${rel}`;
   if ('bucket' in s) {
     const hub = getConfig().hub.replace(/\/$/, '');
     return `${hub}/buckets/${s.bucket}/resolve/${s.path.replace(/\/$/, '')}/${rel}`;

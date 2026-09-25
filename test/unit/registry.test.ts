@@ -23,7 +23,7 @@ describe('registry', () => {
   it('pins every Hugging Face model to a full commit SHA', () => {
     for (const m of registry.list()) {
       if ('repo' in m.source) expect(m.source.revision).toMatch(/^[0-9a-f]{40}$/);
-      if ('github' in m.source) expect(m.source.revision).toMatch(/^[0-9a-f]{40}$/);
+      if ('bucket' in m.source) expect(m.config?.sha256).toBeTruthy();
     }
   });
 

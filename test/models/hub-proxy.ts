@@ -1,7 +1,7 @@
 /**
  * A tiny forwarding server for browser model tests.
  * Headless Chromium in some sandboxes cannot reach the internet directly, so the browser tests
- * point `hub` and `githubRaw` at this server, which fetches (through any HTTPS_PROXY) and caches on disk.
+ * point `hub` at this server, which fetches (through any HTTPS_PROXY) and caches on disk.
  *
  *   bun test/models/hub-proxy.ts            # listens on :8787
  *   EDGEWISE_TEST_HUB=http://localhost:8787 vitest run --project browser-models
@@ -13,7 +13,7 @@ import { join } from 'node:path';
 const port = Number(process.env.PORT ?? 8787);
 const dir = process.env.HUB_PROXY_CACHE ?? join(process.cwd(), '.cache', 'hub-proxy');
 mkdirSync(dir, { recursive: true });
-const upstream: Record<string, string> = { hf: 'https://huggingface.co', gh: 'https://raw.githubusercontent.com', cdn: 'https://cdn.jsdelivr.net' };
+const upstream: Record<string, string> = { hf: 'https://huggingface.co', cdn: 'https://cdn.jsdelivr.net' };
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-expose-headers': '*' };
 const inflight = new Map<string, Promise<boolean>>();
 

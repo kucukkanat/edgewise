@@ -44,8 +44,6 @@ export interface Variant {
 export type ModelSource =
   /** A Hugging Face repo, pinned to a commit. */
   | { repo: string; revision: string; subfolder?: string }
-  /** Files in a GitHub repo, pinned to a commit, served from raw.githubusercontent.com. */
-  | { github: string; revision: string; path: string }
   /** A Hugging Face storage bucket. Buckets are not versioned, so pin files with `config.sha256`. */
   | { bucket: string; path: string }
   /** Any base URL. Files are fetched relative to it. */

@@ -23,7 +23,6 @@ The full reference, generated from the source with TypeDoc, is at **[API referen
 | Option | Default | |
 | --- | --- | --- |
 | `hub` | `https://huggingface.co` | where model files download from |
-| `githubRaw` | `https://raw.githubusercontent.com` | for models hosted on GitHub |
 | `cacheDir` | `$EDGEWISE_CACHE` or `~/.cache/edgewise` | servers |
 | `wasmPaths` | jsDelivr | browsers: where ONNX Runtime loads `.wasm` from |
 | `maxLoadedModels` | 4 | models kept in memory |

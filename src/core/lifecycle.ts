@@ -105,7 +105,7 @@ export const cache = {
     if (match && registry.has(match)) {
       const m = registry.get(match);
       const s = m.source;
-      match = 'repo' in s ? s.repo : 'github' in s ? s.path : 'url' in s ? s.url : match;
+      match = 'repo' in s ? s.repo : 'bucket' in s ? s.path.split('/')[0] : 'url' in s ? s.url : match;
     }
     return getPlatform().cacheDelete(match);
   },

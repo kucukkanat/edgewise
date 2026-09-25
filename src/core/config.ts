@@ -10,8 +10,6 @@ export interface FallbackPolicy {
 export interface EdgewiseConfig {
   /** Base URL model files are downloaded from. Default `https://huggingface.co`. */
   hub: string;
-  /** Base URL for models hosted on GitHub. Default `https://raw.githubusercontent.com`. Point it at a mirror to self-host. */
-  githubRaw: string;
   /** Server only: where model files are cached. Default `$EDGEWISE_CACHE` or `~/.cache/edgewise`. */
   cacheDir?: string;
   /**
@@ -36,7 +34,6 @@ export interface EdgewiseConfig {
 
 const defaults = (): EdgewiseConfig => ({
   hub: 'https://huggingface.co',
-  githubRaw: 'https://raw.githubusercontent.com',
   cacheDir: undefined,
   wasmPaths: undefined,
   maxLoadedModels: 4,

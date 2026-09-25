@@ -26,8 +26,7 @@ Aliases pick a good default for a job. They may point to a better model in a min
 ## Where models come from
 
 - Most models are ONNX exports on Hugging Face, pinned to a commit.
-- Chronos-Bolt was exported to ONNX by Edgewise and is served from the `models` branch of the Edgewise GitHub repository, with SHA-256 hashes.
-- The LiquidAI LFM2.5 encoders were exported by Edgewise and are served from the `kucukkanat/edgewise-models` Hugging Face bucket, with SHA-256 hashes.
+- Models with no official ONNX export (Chronos-Bolt and the LiquidAI LFM2.5 encoders) were exported by Edgewise and are served from the [`kucukkanat/edgewise-models`](https://huggingface.co/buckets/kucukkanat/edgewise-models) Hugging Face bucket. Each file is checked against a SHA-256 hash on download.
 
 The export scripts are in `scripts/export` in the repository.
 
