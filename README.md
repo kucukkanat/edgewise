@@ -62,7 +62,7 @@ bun run typecheck && bun run lint
 bun run test            # unit tests on Bun, Node and Chromium
 bun run test:models     # real models on all three (downloads ~5 GB)
 bun run build           # dist/
-bun docs/build.ts --api # docs/dist, the GitHub Pages site
+bun run docs          # docs/dist, the GitHub Pages site
 ```
 
 The ONNX export scripts for the models Edgewise hosts (Chronos-Bolt, the LiquidAI LFM2.5 encoders) are in `scripts/export`.

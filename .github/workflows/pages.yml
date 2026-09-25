@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun docs/build.ts --api
+      - run: bun --conditions=source docs/build.ts --api
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/dist

@@ -86,7 +86,7 @@
     "test:node": "vitest run --project node",
     "test:browser": "vitest run --project browser",
     "test:models": "bun run test:models:bun && bun run test:models:node && bun run test:models:browser",
-    "docs": "bun run docs/build.ts",
+    "docs": "bun --conditions=source docs/build.ts --api",
     "docs:api": "typedoc",
     "prepublishOnly": "bun run build",
     "test:models:bun": "EDGEWISE_MODEL_TESTS=1 bun test --conditions=source --timeout 1800000 test/models",

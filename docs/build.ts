@@ -1,8 +1,8 @@
 /**
  * Builds the documentation site into docs/dist.
  *
- *   bun docs/build.ts            # pages, models table, search index, demo bundle
- *   bun docs/build.ts --api      # also runs TypeDoc into docs/dist/api
+ *   bun --conditions=source docs/build.ts        # pages, models table, search index, demo bundle
+ *   bun --conditions=source docs/build.ts --api  # also runs TypeDoc into docs/dist/api
  *
  * Pages are Markdown files in docs/content with a small front-matter block:
  *   ---
