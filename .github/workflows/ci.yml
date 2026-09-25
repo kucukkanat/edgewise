@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - name: Unit tests (Bun)
+        run: bun run test:bun
+      - name: Unit tests (Node)
+        run: bun run test:node
+      - run: bunx playwright install --with-deps chromium
+      - name: Unit tests (Chromium)
+        run: bun run test:browser
+      - run: bun run build
+      - name: Smoke-test the built package
+        run: |
+          node -e "import('edgewise').then(async (e) => { const { mockModel } = await import('edgewise/test'); const r = await e.generate({ model: mockModel({ verb: 'generate', respond: () => 'ok' }), input: 'x' }); if (r.text !== 'ok') process.exit(1); console.log('node ok', e.registry.list().length, 'models'); })"
+          bun -e "const e = await import('edgewise'); console.log('bun ok', (await e.capabilities()).runtime)"

@@ -1,0 +1,147 @@
+{
+  "name": "edgewise",
+  "version": "0.1.0",
+  "description": "Six verbs for on-device AI in the browser, Bun and Node: generate, evaluate, embed, speak, paint, forecast.",
+  "license": "MIT",
+  "author": "Hilmi Tolga Sahin (https://github.com/kucukkanat)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kucukkanat/edgewise.git"
+  },
+  "homepage": "https://kucukkanat.github.io/edgewise/",
+  "bugs": "https://github.com/kucukkanat/edgewise/issues",
+  "keywords": [
+    "ai",
+    "webgpu",
+    "onnx",
+    "transformers",
+    "edge",
+    "on-device",
+    "browser",
+    "bun",
+    "llm",
+    "tts",
+    "stt",
+    "embeddings"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.1"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./helpers": {
+      "source": "./src/helpers/index.ts",
+      "types": "./dist/helpers/index.d.ts",
+      "default": "./dist/helpers/index.js"
+    },
+    "./react": {
+      "source": "./src/react/index.ts",
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./ai-sdk": {
+      "source": "./src/ai-sdk/index.ts",
+      "types": "./dist/ai-sdk/index.d.ts",
+      "default": "./dist/ai-sdk/index.js"
+    },
+    "./test": {
+      "source": "./src/test/index.ts",
+      "types": "./dist/test/index.d.ts",
+      "default": "./dist/test/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "imports": {
+    "#platform": {
+      "browser": {
+        "source": "./src/platform/browser.ts",
+        "default": "./dist/platform/browser.js"
+      },
+      "source": "./src/platform/server.ts",
+      "default": "./dist/platform/server.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json && bun scripts/fix-dts.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src test",
+    "format": "biome format --write src test",
+    "test": "bun run test:bun && bun run test:node && bun run test:browser",
+    "test:bun": "bun test --conditions=source test/unit",
+    "test:node": "vitest run --project node",
+    "test:browser": "vitest run --project browser",
+    "test:models": "bun run test:models:bun && bun run test:models:node && bun run test:models:browser",
+    "docs": "bun run docs/build.ts",
+    "docs:api": "typedoc",
+    "prepublishOnly": "bun run build",
+    "test:models:bun": "EDGEWISE_MODEL_TESTS=1 bun test --conditions=source --timeout 1800000 test/models",
+    "test:models:node": "EDGEWISE_MODEL_TESTS=1 vitest run --project node-models",
+    "test:models:browser": "vitest run --project browser-models"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.0",
+    "vgpu": "0.5.0"
+  },
+  "peerDependencies": {
+    "ai": ">=7",
+    "phonemizer": "^1.2.1",
+    "react": ">=18",
+    "zod": ">=3.23",
+    "@ai-sdk/provider": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "phonemizer": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    },
+    "@ai-sdk/provider": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "4.0.18",
+    "@biomejs/biome": "^2.5.14",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^26.6.2",
+    "@types/prismjs": "^1.26.6",
+    "@types/react": "^19.3.0",
+    "@vitest/browser": "^5.0.2",
+    "@vitest/browser-playwright": "^5.0.2",
+    "@webgpu/types": "^0.1.74",
+    "ai": "^7.0.116",
+    "marked": "^18.0.14",
+    "phonemizer": "^1.2.1",
+    "playwright": "^1.63.0",
+    "prismjs": "^1.30.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsup": "^8.5.1",
+    "typedoc": "^0.28.20",
+    "typescript": "5",
+    "vitest": "^5.0.2",
+    "zod": "^4.6.5"
+  }
+}

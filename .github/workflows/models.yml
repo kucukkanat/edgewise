@@ -1,0 +1,43 @@
+name: Real-model tests
+
+# Downloads about 5 GB of models, so it runs weekly, on demand, and when the registry changes.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+  push:
+    branches: [main]
+    paths: ['src/models/**', 'src/backends/**', 'test/models/**']
+
+jobs:
+  models:
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [bun, node, browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      EDGEWISE_CACHE: ${{ github.workspace }}/.cache/edgewise
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: models-${{ matrix.runtime }}-${{ hashFiles('src/models/manifests.ts') }}
+          restore-keys: models-${{ matrix.runtime }}-
+      - if: matrix.runtime == 'bun'
+        run: bun run test:models:bun
+      - if: matrix.runtime == 'node'
+        run: bun run test:models:node
+      - if: matrix.runtime == 'browser'
+        run: |
+          bunx playwright install --with-deps chromium
+          bun test/models/hub-proxy.ts &
+          sleep 2
+          EDGEWISE_TEST_HUB=http://localhost:8787 bun run test:models:browser

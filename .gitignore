@@ -1,0 +1,11 @@
+node_modules/
+dist/
+docs/dist/
+.cache/
+scratch/
+coverage/
+*.log
+.DS_Store
+.vitest-attachments/
+__screenshots__/
+.vitest/
