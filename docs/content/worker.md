@@ -34,13 +34,13 @@ Vite, webpack 5, Rspack, Parcel and esbuild all bundle `new Worker(new URL(…, 
 
 ## What crosses the boundary
 
-Every verb works through the worker with the same options and results:
+Every verb, plus `cloneVoice()`, `listVoices()`, `preload()` and `unload()`, works through the worker with the same options and results:
 
 | | How |
 | --- | --- |
 | Streams and `run.events` | forwarded chunk by chunk |
-| `cancel()` and `signal` | the page rejects at once and tells the worker to stop |
-| `onProgress` | forwarded as load events |
+| `cancel()` and `signal` | the page rejects at once, tells the worker to stop, and stops reading your microphone or text stream |
+| `onProgress`, `onBatch` | forwarded from the worker |
 | `tools` | the model runs in the worker; each tool's `execute` runs **on the page**, after validating its input with your schema |
 | `approve` | asked on the page |
 | `schema` | sent as JSON Schema; the final object is validated with your Zod schema on the page |
@@ -54,7 +54,7 @@ With a schema, the worker checks the JSON loosely and the page checks it strictl
 
 ## Configure the worker
 
-The worker has its own registry and configuration. Configure it through the connection, or in the worker file:
+The worker has its own registry and configuration. Configure it through the connection, or in the worker file. Callbacks such as `speak.onSynthesize` cannot be sent over the connection, so set them in the worker file; `ew.configure()` refuses them with a `ConfigError`.
 
 ```ts
 await ew.configure({ allowPreview: true, maxLoadedModels: 2 });
@@ -71,8 +71,10 @@ serveWorker();
 
 ## Other runtimes
 
-Bun supports Web Workers, so the same code works there. Node has no Web Worker API; `serveWorker(port)` and `connectWorker(port)` also accept any `MessagePort`, such as one from `worker_threads`.
+Bun supports Web Workers, so the same code works there. In Bun, load models either in the worker or on the main thread, not both: loading ONNX Runtime's native addon in two threads of one process crashes Bun 1.3. Node has no Web Worker API; `serveWorker(port)` and `connectWorker(port)` also accept any `MessagePort`, such as one from `worker_threads`.
 
 ```ts
 ew.terminate(); // stop the worker; pending runs reject with AbortError
 ```
+
+Errors keep their class across the boundary, so `err instanceof ModelNotFoundError` works as it does without a worker.

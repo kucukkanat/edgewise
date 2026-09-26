@@ -1,6 +1,6 @@
 import { cosine } from '../../src/helpers/index.ts';
 import { connectWorker } from '../../src/worker/index.ts';
-import { it2, on, report, suite, testConfig } from './setup.ts';
+import { it2, on, report, suite, testConfig } from '../models/setup.ts';
 
 suite('worker mode · real models', () => {
   it2(on(['bun', 'browser'], 'embeds and generates inside a Web Worker'), async () => {

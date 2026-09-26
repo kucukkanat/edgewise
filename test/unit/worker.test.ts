@@ -103,3 +103,43 @@ const hasWorker = typeof Worker !== 'undefined';
 (hasWorker ? describe : describe.skip)('worker bridge (real Worker)', () => {
   suiteFor(() => connectWorker(new Worker(new URL('../fixtures/edgewise.worker.ts', import.meta.url), { type: 'module' })));
 });
+
+describe('worker bridge details', () => {
+  defineWorkerMocks();
+  const { port1, port2 } = new MessageChannel();
+  serveWorker(port1 as never);
+  const ew = connectWorker(port2 as never);
+
+  it('keeps error classes across the boundary', async () => {
+    const { ModelNotFoundError } = await import('../../src/index.ts');
+    const err = await ew.embed({ model: 'no-such-model', input: 'x' }).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ModelNotFoundError);
+  });
+
+  it('stops pulling a page-side stream when the run is cancelled', async () => {
+    let pulls = 0;
+    const endless = (async function* () {
+      for (;;) {
+        pulls++;
+        yield 'More words. ';
+        await new Promise((r) => setTimeout(r, 2));
+      }
+    })();
+    const run = ew.speak({ model: 'wk:voice', input: endless });
+    setTimeout(() => run.cancel(), 30);
+    await expect(run.then((r) => r)).rejects.toBeInstanceOf(AbortError);
+    const at = pulls;
+    await new Promise((r) => setTimeout(r, 80));
+    expect(pulls - at).toBeLessThanOrEqual(1);
+  });
+
+  it('forwards embed batches and refuses callbacks in configure()', async () => {
+    const seen: number[] = [];
+    await ew.embed({ model: 'wk:embed', values: Array.from({ length: 20 }, (_, i) => `t${i}`), onBatch: (p) => seen.push(p.done) });
+    expect(seen.length).toBeGreaterThan(0);
+    await expect(ew.configure({ speak: { onSynthesize: () => {} } })).rejects.toThrow(/cannot be sent to the worker/);
+  });
+});

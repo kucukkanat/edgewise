@@ -14,7 +14,7 @@ import { EdgewiseError, UnsupportedInputError } from 'edgewise';
 try {
   await generate({ model: 'text:default', input: [photo, 'What is this?'] });
 } catch (err) {
-  if (err instanceof UnsupportedInputError) console.log(err.hint); // 'Models that accept image: lfm2.5-vl-450m, …'
+  if (err instanceof UnsupportedInputError) console.log(err.hint); // '"lfm2.5-350m" accepts text. Try "lfm2.5-vl-450m" for image input.'
   if (err instanceof EdgewiseError && err.retryable) retryLater();
 }
 ```
@@ -25,7 +25,7 @@ try {
 | `UnsupportedDeviceError` | `E_UNSUPPORTED` | the device cannot run the model (no WebGPU, browser-only API) |
 | `ModelNotFoundError` | `E_MODEL` | unknown model ID or alias, or a preview model without `allowPreview` |
 | `WrongVerbError` | `E_VERB` | a model used with the wrong verb, such as an embed model in `generate` |
-| `DownloadError` | `E_DOWNLOAD` | a network failure, a bad status, or a SHA-256 mismatch (retryable) |
+| `DownloadError` | `E_DOWNLOAD` | a network failure, a bad status, or a SHA-256 mismatch (`retryable` is true except for 4xx statuses) |
 | `StorageQuotaError` | `E_QUOTA` | the browser refused to store the model |
 | `OutOfMemoryError` | `E_OOM` | the GPU or process ran out of memory; try a smaller model or `dtype` |
 | `BackendError` | `E_BACKEND` | ONNX Runtime failed to load or run the model |
@@ -40,7 +40,7 @@ try {
 configure({
   fallback: {
     onUnsupported: 'next-variant', // or 'throw': try the next device instead of failing
-    onBackendError: 'cpu',         // or 'throw': rerun on the CPU path after a GPU failure
+    onBackendError: 'cpu',         // or 'throw': reload on the CPU path when a Transformers.js model fails to load on the GPU
   },
 });
 ```

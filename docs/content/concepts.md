@@ -35,7 +35,7 @@ run.cancel();                                    // or stop it
 for await (const e of run.events) console.log(e.type); // load, text-delta, tool-call, step, finish
 ```
 
-A Run starts when you first await or iterate it. It can be iterated once. Chunks are buffered from the moment iteration begins, so a slow consumer never misses output. `signal` and `cancel()` both reject the Run with `AbortError`.
+A Run starts when you first await or iterate it. It can be iterated once. Chunks are buffered from the moment iteration begins, so a slow consumer never misses output. `signal` and `cancel()` both reject the Run with `AbortError`, and so does leaving a `for await` loop early with `break`: stopping reading stops the model.
 
 ## Resolution: models, aliases and the registry
 

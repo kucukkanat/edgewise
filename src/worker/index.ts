@@ -17,7 +17,21 @@
  * streamed text for speak() all cross the worker boundary.
  * @module
  */
-import { AbortError, ConfigError, EdgewiseError, SchemaValidationError, UnsupportedInputError } from '../core/errors.ts';
+import {
+  AbortError,
+  BackendError,
+  ConfigError,
+  DownloadError,
+  EdgewiseError,
+  ModelNotFoundError,
+  OutOfMemoryError,
+  PermissionError,
+  SchemaValidationError,
+  StorageQuotaError,
+  UnsupportedDeviceError,
+  UnsupportedInputError,
+  WrongVerbError,
+} from '../core/errors.ts';
 import type { AudioSource, ImageLike, RawPixels } from '../core/parts.ts';
 import { registry } from '../core/registry.ts';
 import { Run, type RunContext, type RunEvent } from '../core/run.ts';
@@ -30,12 +44,34 @@ import type { ForecastManyResult, ForecastOptions, ForecastResult, SeriesInput }
 import type { GenerateChunk, GenerateOptions, GenerateResult } from '../verbs/generate.ts';
 import { imageFromRgba, type PaintOptions, type PaintResult, type PaintStep } from '../verbs/paint.ts';
 import { toJsonSchema, validateWith } from '../verbs/schema.ts';
-import { audioFromSamples, type SpeakOptions, SpeakRun, type SpeechAudio, type SpeechChunk } from '../verbs/speak.ts';
+import {
+  audioFromSamples,
+  type ClonedVoice,
+  type CloneVoiceOptions,
+  type SpeakOptions,
+  SpeakRun,
+  type SpeechAudio,
+  type SpeechChunk,
+  type Voice,
+} from '../verbs/speak.ts';
 import type { AnyTool } from '../verbs/tools.ts';
 
 /* ---------------------------------------------------------------- protocol */
 
-type Op = 'generate' | 'evaluate' | 'embed' | 'speak' | 'paint' | 'forecast' | 'preload' | 'unload' | 'capabilities' | 'configure' | 'models';
+type Op =
+  | 'generate'
+  | 'evaluate'
+  | 'embed'
+  | 'speak'
+  | 'cloneVoice'
+  | 'listVoices'
+  | 'paint'
+  | 'forecast'
+  | 'preload'
+  | 'unload'
+  | 'capabilities'
+  | 'configure'
+  | 'models';
 
 type ToMain =
   | { id: number; type: 'chunk'; chunk: unknown }
@@ -43,7 +79,9 @@ type ToMain =
   | { id: number; type: 'result'; result: unknown }
   | { id: number; type: 'error'; error: SerializedError }
   | { id: number; type: 'tool'; call: number; name: string; input: unknown }
-  | { id: number; type: 'approve'; call: number; request: unknown };
+  | { id: number; type: 'approve'; call: number; request: unknown }
+  | { id: number; type: 'batch'; done: number; total: number }
+  | { type: 'stream-cancel'; stream: number };
 
 type ToWorker =
   | {
@@ -65,6 +103,8 @@ interface SerializedError {
   message: string;
   hint?: string;
   retryable?: boolean;
+  raw?: string;
+  issues?: unknown;
 }
 
 interface Port {
@@ -83,6 +123,8 @@ export interface EdgewiseWorker {
   embed(options: EmbedOneOptions): Promise<EmbedResult>;
   embed(options: EmbedManyOptions): Promise<EmbedManyResult>;
   speak(options: SpeakOptions): SpeakRun;
+  cloneVoice(options: CloneVoiceOptions): Promise<ClonedVoice>;
+  listVoices(model?: string): Promise<Voice[]>;
   paint(options: PaintOptions): Run<PaintResult, PaintStep>;
   forecast(options: ForecastOptions & { series: SeriesInput }): Promise<ForecastResult>;
   forecast(options: ForecastOptions & { series: SeriesInput[] }): Promise<ForecastManyResult>;
@@ -97,10 +139,40 @@ export interface EdgewiseWorker {
   terminate(): void;
 }
 
+const ERRORS: Record<string, new (message: string, o: never) => EdgewiseError> = {
+  E_INPUT: UnsupportedInputError,
+  E_UNSUPPORTED: UnsupportedDeviceError,
+  E_MODEL: ModelNotFoundError,
+  E_VERB: WrongVerbError,
+  E_DOWNLOAD: DownloadError,
+  E_QUOTA: StorageQuotaError,
+  E_OOM: OutOfMemoryError,
+  E_BACKEND: BackendError,
+  E_SCHEMA: SchemaValidationError as never,
+  E_PERMISSION: PermissionError,
+  E_ABORT: AbortError,
+  E_CONFIG: ConfigError,
+};
+
+/** Rebuild an error with its original class, so `instanceof` works across the worker boundary. */
 function reviveError(e: SerializedError): Error {
-  const err = new EdgewiseError((e.code ?? 'E_BACKEND') as never, e.message, { hint: e.hint, retryable: e.retryable });
-  err.name = e.name;
-  return err;
+  const Cls = e.code ? ERRORS[e.code] : undefined;
+  if (!Cls) {
+    const err = new Error(e.message);
+    err.name = e.name;
+    return err;
+  }
+  return new Cls(e.message, { hint: e.hint, retryable: e.retryable, raw: e.raw ?? '', issues: e.issues } as never);
+}
+
+function hasFunction(v: unknown, path = ''): string | null {
+  if (typeof v === 'function') return path || '(root)';
+  if (v === null || typeof v !== 'object' || ArrayBuffer.isView(v)) return null;
+  for (const [k, x] of Object.entries(v)) {
+    const f = hasFunction(x, path ? `${path}.${k}` : k);
+    if (f) return f;
+  }
+  return null;
 }
 
 const isDom = (v: unknown, ctor: string) => {
@@ -135,7 +207,7 @@ async function pageImage(v: ImageLike): Promise<unknown> {
 }
 
 /** Page-side conversion: DOM media to pixels, URLs to markers, live sources to streams. */
-async function toWire(v: unknown, streams: (src: AsyncIterable<unknown>, sampleRate?: number) => number, key?: string): Promise<unknown> {
+async function toWire(v: unknown, streams: (src: AsyncIterable<unknown>) => number, key?: string): Promise<unknown> {
   if (v === null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
   if (v instanceof URL) return { [MARK]: 'url', href: v.href };
   if (isDom(v, 'HTMLImageElement') || isDom(v, 'HTMLCanvasElement') || isDom(v, 'OffscreenCanvas')) return pageImage(v as ImageLike);
@@ -157,7 +229,7 @@ async function toWire(v: unknown, streams: (src: AsyncIterable<unknown>, sampleR
   }
   if ((v as AudioSource).kind === 'audio-source') {
     const s = v as AudioSource;
-    return { [MARK]: 'source', stream: streams(s.utterances(), s.sampleRate), sampleRate: s.sampleRate };
+    return { [MARK]: 'source', stream: streams(s.utterances()), sampleRate: s.sampleRate };
   }
   if (isAsyncIterable(v)) return { [MARK]: 'stream', stream: streams(v as AsyncIterable<unknown>) };
   if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer || isDom(v, 'Blob') || isDom(v, 'ImageBitmap') || isDom(v, 'ImageData') || v instanceof Date) return v;
@@ -176,20 +248,41 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
   let seq = 0;
   let streamSeq = 0;
   const handlers = new Map<number, (m: ToMain) => void>();
+  const pumps = new Map<number, () => void>();
   port.addEventListener('message', (e: MessageEvent) => {
     const m = e.data as ToMain;
-    if (m && typeof m === 'object' && 'id' in m) handlers.get(m.id)?.(m);
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'stream-cancel') pumps.get(m.stream)?.();
+    else if ('id' in m) handlers.get(m.id)?.(m);
   });
   (worker as { start?: () => void }).start?.();
 
-  const openStream = (src: AsyncIterable<unknown>): number => {
+  /** Pump a page-side iterable (a microphone, a text stream) into the worker until it ends or is stopped. */
+  const openStream = (src: AsyncIterable<unknown>, owner?: Set<number>): number => {
     const stream = ++streamSeq;
+    const it = src[Symbol.asyncIterator]();
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      pumps.delete(stream);
+      void it.return?.();
+    };
+    pumps.set(stream, stop);
+    owner?.add(stream);
     (async () => {
       try {
-        for await (const value of src) port.postMessage({ type: 'stream', stream, value } satisfies ToWorker);
+        for (;;) {
+          const r = await it.next();
+          if (stopped) return;
+          if (r.done) break;
+          port.postMessage({ type: 'stream', stream, value: r.value } satisfies ToWorker);
+        }
         port.postMessage({ type: 'stream', stream, done: true } satisfies ToWorker);
       } catch (err) {
-        port.postMessage({ type: 'stream', stream, done: true, error: err instanceof Error ? err.message : String(err) } satisfies ToWorker);
+        if (!stopped) port.postMessage({ type: 'stream', stream, done: true, error: err instanceof Error ? err.message : String(err) } satisfies ToWorker);
+      } finally {
+        pumps.delete(stream);
       }
     })();
     return stream;
@@ -202,11 +295,17 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
     onProgress?: (e: LoadEvent) => void;
     tools?: Record<string, AnyTool>;
     approve?: (call: never) => boolean | Promise<boolean>;
+    onBatch?: (p: { done: number; total: number }) => void;
   }
 
   async function call<R>(op: Op, rawArgs: unknown, o: CallOpts = {}): Promise<R> {
     const id = ++seq;
-    const args = await toWire(rawArgs, openStream);
+    if (o.signal?.aborted) throw new AbortError(undefined, { cause: o.signal.reason });
+    const owned = new Set<number>();
+    const stopStreams = () => {
+      for (const s of owned) pumps.get(s)?.();
+    };
+    const args = await toWire(rawArgs, (src) => openStream(src, owned));
     const tools = o.tools
       ? Object.fromEntries(
           await Promise.all(
@@ -221,15 +320,18 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
       const onAbort = () => {
         port.postMessage({ id, type: 'cancel' } satisfies ToWorker);
         handlers.delete(id);
+        stopStreams();
         reject(new AbortError(undefined, { cause: o.signal?.reason }));
       };
       if (o.signal?.aborted) {
+        stopStreams();
         reject(new AbortError(undefined, { cause: o.signal.reason }));
         return;
       }
       o.signal?.addEventListener('abort', onAbort, { once: true });
       handlers.set(id, async (m) => {
         if (m.type === 'chunk') o.onChunk?.(m.chunk);
+        else if (m.type === 'batch') o.onBatch?.({ done: m.done, total: m.total });
         else if (m.type === 'event') {
           if (m.event.type === 'load') o.onProgress?.(m.event.event);
           o.onEvent?.(m.event);
@@ -255,8 +357,9 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
         } else {
           handlers.delete(id);
           o.signal?.removeEventListener('abort', onAbort);
+          stopStreams();
           if (m.type === 'result') resolve(m.result as R);
-          else reject(reviveError(m.error));
+          else reject(reviveError((m as Extract<ToMain, { type: 'error' }>).error));
         }
       });
       port.postMessage({ id, type: 'call', op, args, tools, approve: !!o.approve } satisfies ToWorker);
@@ -289,7 +392,21 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
       return call('evaluate', strip(options, 'signal', 'onProgress'), { signal: options.signal, onProgress: options.onProgress });
     },
     embed(options: EmbedOneOptions | EmbedManyOptions) {
-      return call('embed', strip(options, 'signal', 'onProgress', 'onBatch'), { signal: options.signal, onProgress: options.onProgress }) as never;
+      return call(
+        'embed',
+        { ...strip(options, 'signal', 'onProgress', 'onBatch'), batches: 'onBatch' in options && !!options.onBatch },
+        {
+          signal: options.signal,
+          onProgress: options.onProgress,
+          onBatch: 'onBatch' in options ? options.onBatch : undefined,
+        },
+      ) as never;
+    },
+    cloneVoice(options: CloneVoiceOptions) {
+      return call('cloneVoice', strip(options, 'signal', 'onProgress'), { signal: options.signal, onProgress: options.onProgress });
+    },
+    listVoices(model?: string) {
+      return call('listVoices', { model });
     },
     speak(options: SpeakOptions) {
       return new SpeakRun(async (ctx: RunContext<SpeechChunk>) => {
@@ -323,7 +440,13 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
     capabilities() {
       return call('capabilities', {});
     },
-    configure(options) {
+    async configure(options) {
+      const fn = hasFunction(options);
+      if (fn) {
+        throw new ConfigError(`"${fn}" is a function and cannot be sent to the worker.`, {
+          hint: 'Set callbacks such as speak.onSynthesize by calling configure() inside the worker file.',
+        });
+      }
       return call('configure', options);
     },
     models() {
@@ -340,6 +463,8 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
 /* ---------------------------------------------------------------- worker side */
 
 function serializeError(err: unknown): SerializedError {
+  if (err instanceof SchemaValidationError)
+    return { name: err.name, code: err.code, message: err.message, hint: err.hint, raw: err.raw, issues: plain(err.issues) };
   if (err instanceof EdgewiseError) return { name: err.name, code: err.code, message: err.message, hint: err.hint, retryable: err.retryable };
   if (err instanceof Error) return { name: err.name, message: err.message };
   return { name: 'Error', message: String(err) };
@@ -422,6 +547,8 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
     else s.push(m.value);
   }
 
+  /** Streams revived for the call being prepared; cancelled on the page when the call ends. */
+  let collecting: Set<number> | null = null;
   function revive(v: unknown): unknown {
     if (v === null || typeof v !== 'object') return v;
     const tag = (v as Record<string, unknown>)[MARK];
@@ -432,26 +559,44 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
     }
     if (tag === 'source') {
       const s = v as { stream: number; sampleRate: number };
+      collecting?.add(s.stream);
       const it = streamOf(s.stream) as AsyncIterable<Float32Array>;
       return { kind: 'audio-source', sampleRate: s.sampleRate, utterances: () => it } satisfies AudioSource;
     }
-    if (tag === 'stream') return streamOf((v as { stream: number }).stream);
+    if (tag === 'stream') {
+      collecting?.add((v as { stream: number }).stream);
+      return streamOf((v as { stream: number }).stream);
+    }
     if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer || v instanceof Date || isDom(v, 'Blob') || isDom(v, 'ImageBitmap') || isDom(v, 'ImageData'))
       return v;
     if (Array.isArray(v)) return v.map(revive);
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, revive(x)]));
   }
 
-  const rpc = (id: number, call: number, msg: ToMain, kind: 'tool-result' | 'approve-result') =>
+  // A round trip to the page. Resolves with a refusal if the run is cancelled meanwhile, so it never hangs.
+  const rpc = (id: number, call: number, msg: ToMain, kind: 'tool-result' | 'approve-result', signal: AbortSignal) =>
     new Promise<ToWorker>((resolve) => {
-      pending.set(`${id}:${kind}:${call}`, resolve);
+      const key = `${id}:${kind}:${call}`;
+      const cancelled = () => {
+        pending.delete(key);
+        resolve({ id, type: kind, call, error: 'The run was cancelled.', ok: false } as ToWorker);
+      };
+      if (signal.aborted) return cancelled();
+      signal.addEventListener('abort', cancelled, { once: true });
+      pending.set(key, (m) => {
+        signal.removeEventListener('abort', cancelled);
+        resolve(m);
+      });
       post(msg);
     });
 
   async function run(m: Extract<ToWorker, { type: 'call' }>) {
     const ac = new AbortController();
     running.set(m.id, ac);
+    const streamsOfCall = new Set<number>();
+    collecting = streamsOfCall;
     const args = revive(m.args) as Record<string, unknown>;
+    collecting = null;
     const onProgress = (e: LoadEvent) => post({ id: m.id, type: 'event', event: { type: 'load', event: e } });
     let callSeq = 0;
     const tools = m.tools
@@ -464,12 +609,12 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
               execute: t.execute
                 ? async (input: unknown) => {
                     const call = ++callSeq;
-                    const r = (await rpc(m.id, call, { id: m.id, type: 'tool', call, name, input: plain(input) }, 'tool-result')) as Extract<
+                    const r = (await rpc(m.id, call, { id: m.id, type: 'tool', call, name, input: plain(input) }, 'tool-result', ac.signal)) as Extract<
                       ToWorker,
                       { type: 'tool-result' }
                     >;
                     if (r.error) throw new Error(r.error);
-                    return r.output;
+                    return revive(r.output);
                   }
                 : undefined,
             } satisfies AnyTool,
@@ -479,7 +624,7 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
     const approve = m.approve
       ? async (request: unknown) => {
           const call = ++callSeq;
-          const r = (await rpc(m.id, call, { id: m.id, type: 'approve', call, request: plain(request) }, 'approve-result')) as Extract<
+          const r = (await rpc(m.id, call, { id: m.id, type: 'approve', call, request: plain(request) }, 'approve-result', ac.signal)) as Extract<
             ToWorker,
             { type: 'approve-result' }
           >;
@@ -490,7 +635,8 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
     const stream = async (r: Run<unknown, unknown>) => {
       const events = r.events;
       const pump = (async () => {
-        for await (const e of events) if (e.type !== 'finish') post({ id: m.id, type: 'event', event: plain(e) as RunEvent });
+        // Load events already reach the page through onProgress; forwarding them here too would double them.
+        for await (const e of events) if (e.type !== 'finish' && e.type !== 'load') post({ id: m.id, type: 'event', event: plain(e) as RunEvent });
       })().catch(() => {}); // the run's own rejection is reported below
       for await (const c of r) post({ id: m.id, type: 'chunk', chunk: plain(c) });
       await pump;
@@ -519,8 +665,17 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
         case 'evaluate':
           result = await ew.evaluate(common as never);
           break;
-        case 'embed':
-          result = await ew.embed(common as never);
+        case 'embed': {
+          const { batches, ...rest } = common as Record<string, unknown>;
+          const onBatch = batches ? (p: { done: number; total: number }) => post({ id: m.id, type: 'batch', ...p }) : undefined;
+          result = await ew.embed({ ...rest, onBatch } as never);
+          break;
+        }
+        case 'cloneVoice':
+          result = await ew.cloneVoice(common as never);
+          break;
+        case 'listVoices':
+          result = await ew.listVoices((args as { model?: string }).model);
           break;
         case 'forecast':
           result = await ew.forecast(common as never);
@@ -550,6 +705,14 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
       post({ id: m.id, type: 'error', error: serializeError(err) });
     } finally {
       running.delete(m.id);
+      // Tell the page to stop any input stream this call did not read to the end (a microphone, say).
+      for (const st of streamsOfCall) {
+        if (streams.has(st) || early.has(st)) {
+          scope.postMessage({ type: 'stream-cancel', stream: st } satisfies ToMain);
+          streams.get(st)?.end();
+          early.delete(st);
+        }
+      }
     }
   }
 

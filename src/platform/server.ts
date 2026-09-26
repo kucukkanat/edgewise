@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { debug, getConfig } from '../core/config.ts';
-import { DownloadError, toEdgewiseError, UnsupportedDeviceError } from '../core/errors.ts';
+import { AbortError, DownloadError, toEdgewiseError, UnsupportedDeviceError } from '../core/errors.ts';
 import { decodeWav, isWav } from './audio.ts';
 import type { DecodedAudio, FetchOptions, GpuInfo, OrtModule, Platform } from './types.ts';
 
@@ -81,21 +81,79 @@ async function detect(): Promise<GpuInfo> {
 }
 
 function keyFor(url: string): string {
-  const h = createHash('sha256').update(url).digest('hex').slice(0, 24);
-  const tail = url.split('?')[0].split('/').slice(-4).join('_') || 'file';
-  return `${h}-${tail.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+  const h = createHash('sha256').update(url).digest('hex').slice(0, 16);
+  let slug = 'file';
+  try {
+    // Keep the whole path readable (org, repo, revision, file) so cache.delete(repo) can match it.
+    slug = new URL(url).pathname.split('/').filter(Boolean).join('_') || 'file';
+  } catch {
+    // not a URL
+  }
+  return `${h}-${slug.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 180)}`;
 }
 
-const inflight = new Map<string, Promise<string>>();
+interface Inflight {
+  promise: Promise<string>;
+  controller: AbortController;
+  waiters: number;
+  progress: Set<(loaded: number, total: number) => void>;
+  last?: [number, number];
+}
 
-/** Download a file into the cache (streaming to disk) and return its path. */
+const inflight = new Map<string, Inflight>();
+
+/**
+ * Download a file into the cache (streaming to disk) and return its path.
+ * Concurrent callers share one download; each caller's signal only cancels its own wait,
+ * and the download stops when every caller has given up.
+ */
 export function fetchToPath(url: string, opts: FetchOptions = {}): Promise<string> {
-  let p = inflight.get(url);
-  if (!p) {
-    p = download(url, opts).finally(() => inflight.delete(url));
-    inflight.set(url, p);
+  let entry = inflight.get(url);
+  if (!entry) {
+    const e: Inflight = { controller: new AbortController(), waiters: 0, progress: new Set(), promise: Promise.resolve('') };
+    e.promise = download(url, {
+      sha256: opts.sha256,
+      signal: e.controller.signal,
+      onProgress: (l, t) => {
+        e.last = [l, t];
+        for (const fn of e.progress) fn(l, t);
+      },
+    }).finally(() => inflight.delete(url));
+    e.promise.catch(() => {});
+    inflight.set(url, e);
+    entry = e;
   }
-  return p;
+  const shared = entry;
+  shared.waiters++;
+  if (opts.onProgress) {
+    shared.progress.add(opts.onProgress);
+    if (shared.last) opts.onProgress(...shared.last);
+  }
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const leave = () => {
+      if (settled) return false;
+      settled = true;
+      shared.waiters--;
+      if (opts.onProgress) shared.progress.delete(opts.onProgress);
+      opts.signal?.removeEventListener('abort', onAbort);
+      return true;
+    };
+    const onAbort = () => {
+      if (!leave()) return;
+      reject(new AbortError(undefined, { cause: opts.signal?.reason }));
+      if (shared.waiters === 0) shared.controller.abort(opts.signal?.reason);
+    };
+    if (opts.signal?.aborted) {
+      onAbort();
+      return;
+    }
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    shared.promise.then(
+      (v) => leave() && resolve(v),
+      (err) => leave() && reject(err),
+    );
+  });
 }
 
 async function download(url: string, opts: FetchOptions): Promise<string> {
@@ -124,6 +182,9 @@ async function download(url: string, opts: FetchOptions): Promise<string> {
   const tmp = `${file}.${process.pid}.${Date.now()}.part`;
   const { createWriteStream } = await import('node:fs');
   const out = createWriteStream(tmp);
+  // Surface open/write failures (disk full, permissions) as rejections instead of uncaught exceptions.
+  const failed = new Promise<never>((_, reject) => out.once('error', reject));
+  failed.catch(() => {});
   const hash = opts.sha256 ? createHash('sha256') : null;
   let loaded = 0;
   try {
@@ -134,18 +195,18 @@ async function download(url: string, opts: FetchOptions): Promise<string> {
         if (done) break;
         loaded += value.byteLength;
         hash?.update(value);
-        if (!out.write(value)) await new Promise<void>((r) => out.once('drain', () => r()));
+        if (!out.write(value)) await Promise.race([new Promise<void>((r) => out.once('drain', () => r())), failed]);
         opts.onProgress?.(loaded, total || loaded);
       }
     }
-    await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
+    await Promise.race([new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve()))), failed]);
     if (total && loaded !== total) throw new DownloadError(`Download of ${url} ended early (${loaded} of ${total} bytes).`);
     if (hash && opts.sha256) {
       const got = hash.digest('hex');
       if (got !== opts.sha256.toLowerCase()) {
         throw new DownloadError(`Checksum mismatch for ${url}: expected ${opts.sha256}, got ${got}.`, {
-          retryable: false,
-          hint: 'The model file on the server changed. Update Edgewise, or report this if you are on the latest version.',
+          retryable: true,
+          hint: 'The file was corrupted in transit, or the model file on the server changed. Update Edgewise, or report this if you are on the latest version.',
         });
       }
     }
@@ -214,7 +275,10 @@ export const platform: Platform = {
     const root = cacheRoot();
     const list: { key: string; bytes: number }[] = [];
     await walk(root, list, root);
-    const victims = list.filter((f) => !prefix || f.key.includes(prefix));
+    // Saved voices and vector indexes are user data, not model files: never delete them here.
+    const victims = list.filter(
+      (f) => !f.key.startsWith('indexes') && (!prefix || f.key.includes(prefix.replace(/[^A-Za-z0-9._-]/g, '_')) || f.key.includes(prefix)),
+    );
     for (const f of victims) await rm(path.join(root, f.key), { force: true });
     return victims.length;
   },

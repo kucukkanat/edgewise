@@ -94,13 +94,15 @@
     "docs": "bun --conditions=source docs/build.ts --api",
     "docs:api": "typedoc",
     "prepublishOnly": "bun run build",
-    "test:models:bun": "EDGEWISE_MODEL_TESTS=1 bun test --conditions=source --timeout 1800000 test/models",
+    "test:models:bun": "EDGEWISE_MODEL_TESTS=1 bun test --conditions=source --timeout 1800000 ./test/models/ && EDGEWISE_MODEL_TESTS=1 bun test --conditions=source --timeout 1800000 ./test/worker-models/",
     "test:models:node": "EDGEWISE_MODEL_TESTS=1 vitest run --project node-models",
     "test:models:browser": "vitest run --project browser-models"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.0",
-    "vgpu": "0.5.0"
+    "vgpu": "0.5.0",
+    "onnxruntime-web": "1.31.0-dev.20260914-8d85527a0",
+    "onnxruntime-node": "1.30.0"
   },
   "peerDependencies": {
     "ai": ">=7",

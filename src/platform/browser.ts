@@ -109,15 +109,17 @@ export const platform: Platform = {
       const got = Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
       if (got !== opts.sha256.toLowerCase()) {
         throw new DownloadError(`Checksum mismatch for ${url}: expected ${opts.sha256}, got ${got}.`, {
-          retryable: false,
-          hint: 'The model file on the server changed. Update Edgewise, or report this if you are on the latest version.',
+          retryable: true,
+          hint: 'The file was corrupted in transit, or the model file on the server changed. Update Edgewise, or report this if you are on the latest version.',
         });
       }
     }
     try {
       await cache?.put(
         url,
-        new Response(bytes as Uint8Array<ArrayBuffer>, { headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream' } }),
+        new Response(bytes as Uint8Array<ArrayBuffer>, {
+          headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream', 'content-length': String(bytes.byteLength) },
+        }),
       );
     } catch {
       // Quota or private mode: keep working without the cache.
@@ -134,7 +136,8 @@ export const platform: Platform = {
         const c = await caches.open(name);
         for (const req of await c.keys()) {
           const r = await c.match(req);
-          const len = Number(r?.headers.get('content-length')) || (r ? (await r.clone().arrayBuffer()).byteLength : 0);
+          // Avoid reading multi-GB bodies just to size them; fall back to a Blob, which browsers back on disk.
+          const len = Number(r?.headers.get('content-length')) || (r ? (await r.blob()).size : 0);
           out.push({ key: req.url, bytes: len });
         }
       } catch {
@@ -209,6 +212,7 @@ export const platform: Platform = {
     return ortPromise;
   },
   async playAudio(samples: Float32Array, sampleRate: number, signal?: AbortSignal) {
+    if (signal?.aborted) return;
     const Ctx = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
     if (!Ctx) throw new UnsupportedDeviceError('Audio playback needs the Web Audio API, which is not available here.');
     audioCtx ??= new Ctx();

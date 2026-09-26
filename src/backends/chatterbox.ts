@@ -1,4 +1,4 @@
-import { ConfigError, UnsupportedInputError } from '../core/errors.ts';
+import { ConfigError, throwIfAborted, UnsupportedInputError } from '../core/errors.ts';
 import type { AudioLike } from '../core/parts.ts';
 import { getPlatform } from '../core/runtime.ts';
 import type { CommonOptions, Manifest, RunInfo } from '../core/types.ts';
@@ -106,6 +106,10 @@ export async function chatterboxSentence(
   // Roughly 25 speech tokens per second; allow generous room for slow speech.
   const words = text.split(/\s+/).filter(Boolean).length;
   const maxTokens = o.maxTokens ?? Math.min(1000, 60 + words * 25);
+  throwIfAborted(opts.signal);
+  const stopper = new (t as unknown as { InterruptableStoppingCriteria: new () => { interrupt(): void } }).InterruptableStoppingCriteria();
+  const onAbort = () => stopper.interrupt();
+  opts.signal?.addEventListener('abort', onAbort, { once: true });
   const wav = await serialize(`clone:${loaded.info.model}:${loaded.info.device}`, () =>
     loaded.value.model.generate({
       ...ids,
@@ -117,8 +121,10 @@ export async function chatterboxSentence(
       max_new_tokens: maxTokens,
       repetition_penalty: 1.2,
       do_sample: false,
+      stopping_criteria: [stopper],
     }),
-  );
+  ).finally(() => opts.signal?.removeEventListener('abort', onAbort));
+  throwIfAborted(opts.signal);
   return { samples: Float32Array.from(wav.data as ArrayLike<number>), info: loaded.info };
 }
 
@@ -144,20 +150,34 @@ export function voiceToBytes(v: ClonedVoice): Uint8Array {
   return out;
 }
 
+const TENSORS = ['audio_features', 'audio_tokens', 'speaker_embeddings', 'speaker_features'] as const;
+
 export function voiceFromBytes(b: Uint8Array): ClonedVoice {
-  if (new TextDecoder().decode(b.subarray(0, 8)) !== MAGIC) throw new ConfigError('Not a saved Edgewise voice.');
+  const bad = (why: string) => new ConfigError(`This saved voice is damaged (${why}).`, { hint: 'Clone the voice again with saveAs.' });
+  if (b.length < 12 || new TextDecoder().decode(b.subarray(0, 8)) !== MAGIC) throw new ConfigError('Not a saved Edgewise voice.');
   const len = new DataView(b.buffer, b.byteOffset).getUint32(8, true);
-  const header = JSON.parse(new TextDecoder().decode(b.subarray(12, 12 + len))) as {
+  if (12 + len > b.length) throw bad('truncated header');
+  let header: {
     model: string;
-    tensors: { name: keyof Omit<ClonedVoice, 'kind' | 'model'>; type: 'float32' | 'int64'; dims: number[]; bytes: number }[];
+    tensors: { name: (typeof TENSORS)[number]; type: 'float32' | 'int64'; dims: number[]; bytes: number }[];
   };
+  try {
+    header = JSON.parse(new TextDecoder().decode(b.subarray(12, 12 + len)));
+  } catch {
+    throw bad('unreadable header');
+  }
+  if (typeof header?.model !== 'string' || !Array.isArray(header.tensors)) throw bad('unexpected header');
   let o = 12 + len;
   const v = { kind: 'cloned-voice', model: header.model } as ClonedVoice;
   for (const t of header.tensors) {
+    if (!TENSORS.includes(t.name) || (t.type !== 'float32' && t.type !== 'int64')) throw bad(`unexpected tensor ${String(t.name)}`);
+    const size = t.dims.reduce((a, d) => a * d, 1) * (t.type === 'int64' ? 8 : 4);
+    if (size !== t.bytes || o + t.bytes > b.length) throw bad('truncated data');
     const raw = b.slice(o, o + t.bytes).buffer;
     v[t.name] = { type: t.type, dims: t.dims, data: t.type === 'int64' ? new BigInt64Array(raw) : new Float32Array(raw) };
     o += t.bytes;
   }
+  for (const k of TENSORS) if (!v[k]) throw bad(`missing ${k}`);
   return v;
 }
 

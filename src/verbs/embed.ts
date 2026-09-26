@@ -67,6 +67,7 @@ export async function embed(options: EmbedOptions): Promise<EmbedResult | EmbedM
           normalize: options.normalize,
           onBatch: many && (options as EmbedManyOptions).onBatch ? (done, total) => (options as EmbedManyOptions).onBatch?.({ done, total }) : undefined,
         });
+  if (m.task === 'mock' && many) (options as EmbedManyOptions).onBatch?.({ done: texts.length, total: texts.length });
   const dimensions = vectors[0]?.length ?? options.dimensions ?? native ?? 0;
   const tag = options.dimensions ? `${m.id}@${options.dimensions}` : m.id;
   if (many) return { embeddings: vectors, model: tag, dimensions, info };

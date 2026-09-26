@@ -119,8 +119,10 @@ export async function selectVariant(m: Manifest, opts: Pick<CommonOptions, 'devi
   }
   for (const device of wanted) {
     if (opts.dtype) {
-      const v = m.variants.find((x) => x.devices.includes(device)) ?? m.variants[0];
-      return { device, dtype: opts.dtype, variant: v };
+      // A dtype override still has to use a variant that runs on this device.
+      const v = m.variants.find((x) => x.devices.includes(device) && (!x.shaderF16 || caps.shaderF16));
+      if (v) return { device, dtype: opts.dtype, variant: v };
+      continue;
     }
     const v = m.variants.find((x) => x.devices.includes(device) && (!x.shaderF16 || caps.shaderF16));
     if (v) return { device, dtype: v.dtype, variant: v };

@@ -19,6 +19,8 @@ export default defineConfig({
   clean: true,
   dts: false,
   treeshake: true,
+  // Keep `node:` specifiers so Deno and edge bundlers resolve builtins.
+  removeNodeProtocol: false,
   external: [
     '#platform',
     '@huggingface/transformers',

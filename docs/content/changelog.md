@@ -12,6 +12,10 @@ order: 40
 - Worker mode: `edgewise/worker` runs every verb in a Web Worker with the same API, including streams, tools, schemas and microphone input.
 - Models Edgewise exports are all served from the `kucukkanat/edgewise-models` Hugging Face bucket.
 - Browser network failures are reported as `DownloadError`.
+- Cancelling is consistent: `cancel()`, an aborted `signal`, and leaving a `for await` loop early all reject the Run with `AbortError`.
+- Server downloads: concurrent callers share one download, one caller's abort no longer fails the others, and disk errors reject instead of crashing the process.
+- `cache.delete()` matches model repos and never removes saved voices or vector indexes.
+- `onnxruntime-web` and `onnxruntime-node` are declared dependencies, pinned to the versions Transformers.js uses.
 
 ## 0.1.0
 

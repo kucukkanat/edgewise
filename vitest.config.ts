@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 
 const executablePath = process.env.CHROMIUM_PATH ?? (process.env.CI ? undefined : '/opt/pw-browsers/chromium');
 
-const browser = (include: string[], name: string, timeout: number) => ({
+const browser = (include: string[], name: string, timeout: number, exclude: string[] = []) => ({
   extends: true as const,
   resolve: { conditions: ['source', 'browser', 'module', 'import', 'default'] },
   optimizeDeps: { exclude: ['@huggingface/transformers', 'onnxruntime-web', 'phonemizer'] },
@@ -11,6 +11,7 @@ const browser = (include: string[], name: string, timeout: number) => ({
   test: {
     name,
     include,
+    exclude,
     fileParallelism: false,
     testTimeout: timeout,
     hookTimeout: timeout,
@@ -38,7 +39,7 @@ export default defineConfig({
         ssr: { resolve: { conditions: ['source', 'node', 'import', 'default'], externalConditions: ['source'] } },
         test: { name: 'node', environment: 'node', include: ['test/unit/**/*.test.ts'] },
       },
-      browser(['test/unit/**/*.test.ts'], 'browser', 30_000),
+      browser(['test/unit/**/*.test.ts'], 'browser', 30_000, ['test/unit/server-cache.test.ts']),
       {
         extends: true,
         resolve: { conditions: ['source', 'node', 'import', 'default'] },
@@ -52,7 +53,7 @@ export default defineConfig({
           fileParallelism: false,
         },
       },
-      browser(['test/models/**/*.test.ts'], 'browser-models', 900_000),
+      browser(['test/models/**/*.test.ts', 'test/worker-models/**/*.test.ts'], 'browser-models', 900_000),
     ],
   },
 });

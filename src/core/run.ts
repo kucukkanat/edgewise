@@ -73,6 +73,7 @@ export class Run<Result, Chunk> implements PromiseLike<Result>, AsyncIterable<Ch
   private iterating = false;
   private eventsRead = false;
   private readonly controller = new AbortController();
+  private detach: () => void = () => {};
 
   constructor(
     private readonly executor: (ctx: RunContext<Chunk>) => Promise<Result>,
@@ -80,7 +81,12 @@ export class Run<Result, Chunk> implements PromiseLike<Result>, AsyncIterable<Ch
   ) {
     if (signal) {
       if (signal.aborted) this.controller.abort(signal.reason);
-      else signal.addEventListener('abort', () => this.controller.abort(signal.reason), { once: true });
+      else {
+        const onAbort = () => this.controller.abort(signal.reason);
+        signal.addEventListener('abort', onAbort, { once: true });
+        // Drop the listener when the run settles, so a long-lived signal does not keep finished runs alive.
+        this.detach = () => signal.removeEventListener('abort', onAbort);
+      }
     }
   }
 
@@ -95,17 +101,23 @@ export class Run<Result, Chunk> implements PromiseLike<Result>, AsyncIterable<Ch
       },
       signal: this.controller.signal,
     };
+    const aborted = () => new AbortError(undefined, { cause: this.controller.signal.reason });
     this.started = (async () => {
-      if (this.controller.signal.aborted) throw new AbortError(undefined, { cause: this.controller.signal.reason });
-      return this.executor(ctx);
+      if (this.controller.signal.aborted) throw aborted();
+      const r = await this.executor(ctx);
+      // Every verb behaves the same way: a cancelled run rejects, even if the executor returned partial output.
+      if (this.controller.signal.aborted) throw aborted();
+      return r;
     })().then(
       (r) => {
+        this.detach();
         ctx.event({ type: 'finish', result: r });
         this.chunks.close();
         this.eventsChannel.close();
         return r;
       },
       (err) => {
+        this.detach();
         this.chunks.close(err);
         this.eventsChannel.close(err);
         throw err;
@@ -136,7 +148,9 @@ export class Run<Result, Chunk> implements PromiseLike<Result>, AsyncIterable<Ch
     p.catch(() => {});
     return {
       next: () => this.chunks.next(),
+      // Leaving a for-await loop early (break, return, throw) cancels the run.
       return: async () => {
+        this.cancel(new AbortError('The consumer stopped reading the run.'));
         return { value: undefined as Chunk, done: true };
       },
     };

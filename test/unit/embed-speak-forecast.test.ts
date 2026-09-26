@@ -156,3 +156,24 @@ describe('voice cloning (no downloads)', () => {
     expect(Array.from(back.speaker_features.data as Float32Array)).toEqual([42]);
   });
 });
+
+describe('saved voice validation', () => {
+  it('rejects damaged files with ConfigError', async () => {
+    const { voiceFromBytes, voiceToBytes } = await import('../../src/backends/chatterbox.ts');
+    const t = (n: number) => ({ type: 'float32' as const, dims: [n], data: new Float32Array(n) });
+    const good = voiceToBytes({
+      kind: 'cloned-voice',
+      model: 'm',
+      audio_features: t(2),
+      audio_tokens: { type: 'int64', dims: [1], data: new BigInt64Array(1) },
+      speaker_embeddings: t(1),
+      speaker_features: t(1),
+    });
+    expect(() => voiceFromBytes(good.subarray(0, good.length - 3))).toThrow(ConfigError);
+    expect(() => voiceFromBytes(new Uint8Array(5))).toThrow(ConfigError);
+    const corrupt = good.slice();
+    corrupt[14] = 0x7b;
+    corrupt[15] = 0x7b;
+    expect(() => voiceFromBytes(corrupt)).toThrow(ConfigError);
+  });
+});

@@ -112,6 +112,7 @@ function renderPage(slug: string, body: string, pageSlugs: Set<string>): { html:
         // `#page` or `page#section` links between pages become relative .html links.
         const m = /^#?([a-z0-9-]+)(#[a-z0-9-]+)?$/.exec(href);
         if (m && pageSlugs.has(m[1]) && (href.startsWith('#') ? true : !href.includes('.'))) h = `${m[1] === 'intro' ? 'index' : m[1]}.html${m[2] ?? ''}`;
+        if (/^\s*(javascript|data|vbscript):/i.test(h)) h = '#';
         const ext = /^https?:/.test(h) ? ' rel="noopener"' : '';
         return `<a href="${esc(h)}"${title ? ` title="${esc(title)}"` : ''}${ext}>${text}</a>`;
       },
@@ -139,7 +140,8 @@ function loadPages(): Page[] {
       const { html, headings } = renderPage(slug, expanded, slugs);
       const text = html
         .replace(/<[^>]+>/g, ' ')
-        .replace(/&[a-z]+;/g, ' ')
+        .replace(/&#39;|&quot;|&lt;|&gt;|&amp;/g, (e) => decode(e))
+        .replace(/&[a-z0-9#]+;/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       return {
@@ -201,8 +203,8 @@ function modelsTable(): string {
       const dev = m.devices
         .map((d) => `<span class="chip ${d === 'webgpu' ? 'gpu' : 'wasm'}">${d === 'webgpu' ? 'WebGPU' : d === 'wasm' ? 'WASM' : 'CPU'}</span>`)
         .join(' ');
-      const note = [m.aliases.map((a) => `alias <code>${a}</code>`).join(', '), m.notes].filter(Boolean).join(' · ');
-      return `<tr data-verb="${m.verb}" data-accepts="${m.accepts.join(' ')}" data-status="${m.status}"><td><div class="mid-id">${esc(m.id)}</div><div class="mnote">${esc(m.params)}${m.params ? ' params' : ''}</div>${note ? `<div class="mnote">${note}</div>` : ''}</td><td><code>${m.verb}</code></td><td>${m.accepts.map((a) => `<span class="chip in">${a}</span>`).join(' ')}</td><td><div class="sizebar"><span class="track"><span class="fill" style="width:${m.mb ? Math.max(4, Math.min(100, (Math.log10(m.mb) / Math.log10(3000)) * 100)).toFixed(0) : 0}%"></span></span><span class="v">${m.size}</span></div></td><td style="white-space:nowrap">${dev}</td><td><span class="chip ${m.status}">${m.status}</span></td><td><code>${esc(m.license)}</code></td></tr>`;
+      const note = [m.aliases.map((a) => `alias <code>${esc(a)}</code>`).join(', '), esc(m.notes)].filter(Boolean).join(' · ');
+      return `<tr data-verb="${esc(m.verb)}" data-accepts="${esc(m.accepts.join(' '))}" data-status="${esc(m.status)}"><td><div class="mid-id">${esc(m.id)}</div><div class="mnote">${esc(m.params)}${m.params ? ' params' : ''}</div>${note ? `<div class="mnote">${note}</div>` : ''}</td><td><code>${esc(m.verb)}</code></td><td>${m.accepts.map((a) => `<span class="chip in">${esc(a)}</span>`).join(' ')}</td><td><div class="sizebar"><span class="track"><span class="fill" style="width:${m.mb ? Math.max(4, Math.min(100, (Math.log10(m.mb) / Math.log10(3000)) * 100)).toFixed(0) : 0}%"></span></span><span class="v">${m.size}</span></div></td><td style="white-space:nowrap">${dev}</td><td><span class="chip ${esc(m.status)}">${esc(m.status)}</span></td><td><code>${esc(m.license)}</code></td></tr>`;
     })
     .join('\n');
   return `<div class="mfilters"><div class="seg" id="verbSeg" role="group" aria-label="Verb"></div><div class="seg" id="inSeg" role="group" aria-label="Input"></div><label class="chk"><input type="checkbox" id="stableOnly"> Stable only</label></div>

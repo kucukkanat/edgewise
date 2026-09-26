@@ -1,4 +1,4 @@
-import { cloneVoice, generate, speak } from '../../src/index.ts';
+import { capabilities, cloneVoice, generate, speak } from '../../src/index.ts';
 import { resample } from '../../src/platform/audio.ts';
 import { isBrowser, it2, on, report, suite } from './setup.ts';
 
@@ -36,7 +36,11 @@ const reference = (voice: string) =>
 
 suite('speak · voice cloning (Chatterbox Turbo)', () => {
   it2(on(['bun', 'node', 'browser'], 'clones two voices and keeps the words and the pitch'), async () => {
-    if (isBrowser && !(await (navigator as Navigator & { gpu?: GPU }).gpu?.requestAdapter())) return;
+    // In browsers Chatterbox needs a hardware GPU: on a software WebGPU adapter it exceeds typical CI memory.
+    if (isBrowser && !(await capabilities()).hardwareGpu) {
+      report('chatterbox', 'skipped: no hardware GPU in this browser');
+      return;
+    }
     const pitches: Record<string, number> = {};
     for (const v of ['af_heart', 'bm_george']) {
       const ref = await reference(v);

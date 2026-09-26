@@ -43,7 +43,7 @@ configure({ serverGpu: 'force' }); // accept any adapter, even a software one
 
 ## What is tested where
 
-Real-model tests run each verb on Bun, Node and headless Chromium (WebGPU on SwiftShader, and WASM). The [model list](models) marks a model `stable` only when all three pass. SD-Turbo is the exception: in browsers it needs a hardware GPU with enough memory, so it is tested on Bun and Node.
+Real-model tests run each verb on Bun, Node and headless Chromium (WebGPU on SwiftShader, and WASM). The [model list](models) marks a model `stable` only when all three pass. SD-Turbo and Chatterbox are the exceptions: in browsers they need a hardware GPU with enough memory, so the test suite runs them on Bun and Node, and in browsers only when a hardware GPU is present. Both are `preview` until they pass in a browser too.
 
 ## Offline and self-hosting
 
