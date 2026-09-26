@@ -53,7 +53,7 @@ code,pre{font-family:var(--f-mono)}
 @keyframes drift{to{transform:translate3d(3%,4%,0) scale(1.08)}}
 .hero::after{content:"";position:absolute;inset:auto 0 0 0;height:200px;background:linear-gradient(transparent,var(--bg));z-index:-1;pointer-events:none}
 .hero-inner{width:100%;max-width:1240px;margin:0 auto;display:grid;grid-template-columns:1.25fr .9fr;gap:56px;align-items:center}
-@media (max-width:1000px){.hero-inner{grid-template-columns:1fr;gap:36px}}
+@media (max-width:1000px){.hero-inner{grid-template-columns:minmax(0,1fr);gap:36px}}
 .kicker{display:inline-flex;align-items:center;gap:10px;font-family:var(--f-mono);font-size:12.5px;color:var(--ink-2);border:1px solid var(--line-2);background:rgba(255,255,255,.03);padding:6px 14px 6px 10px;border-radius:99px;margin:0 0 26px}
 .pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(60,224,192,.6);animation:ping 2s infinite}
 @keyframes ping{70%{box-shadow:0 0 0 10px rgba(60,224,192,0)}100%{box-shadow:0 0 0 0 rgba(60,224,192,0)}}
@@ -147,7 +147,7 @@ section{position:relative}
 .case[aria-selected="true"] b{color:var(--c)}
 .panel{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);min-height:540px;animation:panelin .5s var(--ease)}
 @keyframes panelin{from{opacity:0;transform:translateY(10px)}}
-@media (max-width:900px){.panel{grid-template-columns:1fr}}
+@media (max-width:900px){.panel{grid-template-columns:minmax(0,1fr)}}
 .controls{padding:24px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:16px}
 @media (max-width:900px){.controls{border-right:0;border-bottom:1px solid var(--line)}}
 .output{padding:24px;position:relative;display:flex;flex-direction:column;gap:14px;min-width:0}
@@ -351,7 +351,7 @@ mark.masked .mt{color:transparent}
 
 /* ---------- compose pipeline ---------- */
 .pipe{max-width:1240px;margin:0 auto;border-radius:26px;border:1px solid var(--line-2);background:linear-gradient(180deg,var(--panel),var(--bg-2));padding:28px;display:grid;grid-template-columns:1fr 1fr;gap:28px}
-@media (max-width:900px){.pipe{grid-template-columns:1fr}}
+@media (max-width:900px){.pipe{grid-template-columns:minmax(0,1fr)}}
 .nodes{display:flex;flex-direction:column;gap:0}
 .node{--c:var(--vad);position:relative;display:grid;grid-template-columns:48px 1fr auto;gap:14px;align-items:center;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.02);transition:all .4s var(--ease)}
 .node .ic{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 12%,transparent);color:var(--c);font-size:22px}
@@ -515,16 +515,17 @@ details.adv .field{margin-top:10px}
 /* voice assistant (compose) */
 .pipe{display:block;padding:18px}
 .va{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px}
-@media (max-width:900px){.va{grid-template-columns:1fr}}
+@media (max-width:900px){.va{grid-template-columns:minmax(0,1fr)}}
 .va-left{display:flex;flex-direction:column;gap:10px}
 .va-right{display:flex;flex-direction:column;gap:10px;min-width:0}
-.orb{--oc:var(--muted);--lvl:0;position:relative;display:grid;grid-template-columns:76px 1fr;gap:14px;align-items:center;padding:12px 14px;border-radius:18px;border:1px solid color-mix(in srgb,var(--oc) 40%,transparent);background:linear-gradient(90deg,color-mix(in srgb,var(--oc) 12%,transparent),transparent 70%);transition:border-color .4s,background .4s}
+.orb{--oc:var(--muted);--lvl:0;position:relative;display:grid;grid-template-columns:76px minmax(0,1fr);gap:14px;align-items:center;padding:12px 14px;border-radius:18px;border:1px solid color-mix(in srgb,var(--oc) 40%,transparent);background:linear-gradient(90deg,color-mix(in srgb,var(--oc) 12%,transparent),transparent 70%);transition:border-color .4s,background .4s}
 .orb-core{position:relative;width:64px;height:64px;border-radius:50%;display:grid;place-items:center;font-size:26px;background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--oc) 60%,#fff 10%),color-mix(in srgb,var(--oc) 25%,#000) 70%);box-shadow:0 0 calc(10px + var(--lvl) * 40px) color-mix(in srgb,var(--oc) 70%,transparent);transform:scale(calc(1 + var(--lvl) * .18));transition:transform .08s,box-shadow .08s;margin-left:6px}
 .orb-ring{position:absolute;left:14px;top:50%;width:76px;height:76px;margin-top:-38px;border-radius:50%;border:2px solid var(--oc);opacity:.5;pointer-events:none}
 .orb[data-state="listening"] .orb-ring,.orb[data-state="hearing"] .orb-ring,.orb[data-state="speaking"] .orb-ring{animation:ringout 1.6s ease-out infinite}
 .orb[data-state="thinking"] .orb-ring,.orb[data-state="tool"] .orb-ring,.orb[data-state="transcribing"] .orb-ring,.orb[data-state="loading"] .orb-ring{border-style:dashed;animation:spin2 1.4s linear infinite}
 @keyframes ringout{from{transform:scale(.85);opacity:.7}to{transform:scale(1.25);opacity:0}}
 @keyframes spin2{to{transform:rotate(360deg)}}
+.orb-text{min-width:0}
 .orb-text b{display:block;font-family:var(--f-display);font-size:20px;letter-spacing:-.01em;color:var(--ink)}
 .orb-text small{display:block;font-family:var(--f-mono);font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .va-nodes{display:grid;grid-template-columns:1fr 1fr;gap:6px}
@@ -557,3 +558,21 @@ details.adv .field{margin-top:10px}
 .va details.adv .field{margin-top:6px}
 .va-chat .msg.ai{white-space:normal}
 .va-chat .msg.ai p{margin:0}
+
+/* mobile: the voice assistant */
+@media (max-width:560px){
+  .pipe{padding:12px;border-radius:20px}
+  .orb{grid-template-columns:60px minmax(0,1fr);padding:10px}
+  .orb-core{width:52px;height:52px;font-size:22px;margin-left:4px}
+  .orb-ring{width:62px;height:62px;margin-top:-31px;left:10px}
+  .orb-text b{font-size:17px}
+  .orb-text small{white-space:normal}
+  .va .run{white-space:nowrap}
+  .va-nodes{grid-template-columns:1fr 1fr}
+  .vn{padding:7px 8px}
+  .vn .vl{font-size:11.5px}
+  .va-chat{min-height:280px;max-height:60vh}
+  .va .row .run{flex:1;justify-content:center}
+  .compose .sec-head h2{font-size:32px}
+  .play,.compose,.models,.start{padding:72px 14px}
+}

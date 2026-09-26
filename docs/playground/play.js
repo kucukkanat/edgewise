@@ -31,6 +31,7 @@ const ready = (async () => {
   const ew = await lib;
   const c = await ew.capabilities();
   state.caps = c;
+  globalThis.__ewCaps = c;
   for (const m of ew.registry.list({ runnable: true })) state.runnable.add(m.id);
   // The download this device will actually make: the variant for its likely device, not the smallest one.
   const dev = c.webgpu && c.hardwareGpu ? 'webgpu' : 'wasm';
@@ -3335,6 +3336,14 @@ const odd = await detectAnomalies(history, {
     { k: 'voice', label: 'Voice', c: 'var(--speak)', models: ['kokoro-82m'] },
   ];
   const DEF = { vad: 'silero-vad', stt: 'moonshine-tiny', brain: 'lfm2.5-350m', voice: 'kokoro-82m' };
+  // Phones and tablets get a memory-lean setup. iOS closes a tab that uses too much memory
+  // ("A problem repeatedly occurred"), and the desktop setup peaks near 4 GB: on WebAssembly the fp16 LFM
+  // is upcast to fp32 (~3 GB), and on WebGPU Kokoro fp32 and Moonshine cost ~1.6 GB and ~0.9 GB.
+  // Lean: speech models on WebAssembly (q8), the brain on WebGPU, one runtime instead of a worker: ~1.4 GB.
+  const UA = navigator.userAgent;
+  const LITE = /iPhone|iPad|iPod|Android/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1) || (navigator.deviceMemory ?? 8) <= 4 || new URLSearchParams(location.search).has('lite');
+  const DEVICE = LITE ? { stt: 'wasm', voice: 'wasm' } : {};
+  const dev = (k) => (DEVICE[k] ? { device: DEVICE[k] } : {});
   const notes = [];
   const timers = new Map();
   const pending = [];
@@ -3421,11 +3430,13 @@ for await (const heard of microphone.utterances()) {
     b.className = cls;
   };
   const loaded = new Set();
+  const state0 = () => globalThis.__ewCaps ?? {};
   // The brain runs in a Web Worker (edgewise/worker): while it thinks, the main thread keeps running VAD,
   // so barge-in stays instant even without a GPU. Falls back to the main thread if workers fail.
   let brainP = null;
   const brainApi = () =>
     (brainP ??= lib.then(async (ew) => {
+      if (LITE) return ew; // a second ONNX Runtime in a worker costs memory phones do not have
       try {
         const w = ew.worker.connectWorker(new Worker(new URL('./va-worker.js', import.meta.url), { type: 'module' }));
         const hub = new URLSearchParams(location.search).get('hub');
@@ -3465,7 +3476,7 @@ for await (const heard of microphone.utterances()) {
     badge(k, 'loading…', 'busy');
     if (state === 'loading' || !busy()) r.ohint.textContent = `loading ${id}…`;
     const api = k === 'brain' ? await brainApi() : ew;
-    await api.preload([id], { onProgress: loaderFor(k, id), allowPreview: true });
+    await api.preload([id], { onProgress: loaderFor(k, id), allowPreview: true, ...dev(k) });
     if (k === 'brain' && api !== ew) {
       loaded.add(id);
       badge(k, 'ready · in a worker', 'ok');
@@ -3585,7 +3596,7 @@ for await (const heard of microphone.utterances()) {
         }
       }
       const speakTask = (async () => {
-        const sp = ew.speak({ model: 'kokoro-82m', voice: r.voice.value || 'af_heart', speed: +r.speed.value, input: deltas(), signal });
+        const sp = ew.speak({ model: 'kokoro-82m', voice: r.voice.value || 'af_heart', speed: +r.speed.value, input: deltas(), signal, ...dev('voice') });
         for await (const c of sp) {
           if (signal.aborted) break;
           const at = t.pl.push(c.samples, c.sampleRate);
@@ -3662,7 +3673,7 @@ for await (const heard of microphone.utterances()) {
     const prev = state;
     if (!busy()) setState('transcribing');
     dbg('utterance', (audioIn.length / 16000).toFixed(2), 's');
-    const { text } = await ew.generate({ model: sttId, input: audioIn, onProgress: loaderFor('stt', sttId) });
+    const { text } = await ew.generate({ model: sttId, input: audioIn, onProgress: loaderFor('stt', sttId), ...dev('stt') });
     dbg('heard', text);
     const said = text.trim();
     if (!said) return !busy() && setState('listening');
@@ -3694,6 +3705,15 @@ for await (const heard of microphone.utterances()) {
     try {
       const ew = await lib;
       audio(); // unlock audio playback inside the click
+      if (LITE) {
+        await ready;
+        const c = state0();
+        // Without WebGPU the brain would run as fp32 on WebAssembly (~3 GB): more than a phone allows a tab.
+        if (!(c.webgpu && c.hardwareGpu)) throw new Error('This phone has no WebGPU, and the language model needs about 3 GB of memory without it, more than mobile browsers allow a tab. Try Safari 26 or Chrome with WebGPU, or a computer.');
+        // Free models other demos loaded, so the four voice models fit.
+        await ew.unload();
+        loaded.clear();
+      }
       for (const n of NODES) await ensure(ew, n.k);
       const vad = Object.fromEntries($$('[data-v]', root).map((el) => [el.dataset.v, +el.value]));
       const proc = Object.fromEntries($$('[data-a]', root).map((el) => [el.dataset.a, el.checked]));
@@ -3772,7 +3792,7 @@ for await (const heard of microphone.utterances()) {
     badge('voice', 'loading…', 'busy');
     const pl = player();
     const name = r.voice.selectedOptions[0]?.textContent.split(' · ')[0] ?? 'your assistant';
-    const sp = ew.speak({ model: 'kokoro-82m', voice: r.voice.value, speed: +r.speed.value, input: `Hi, I'm ${name}. Talk over me whenever you like.`, onProgress: loaderFor('voice', 'kokoro-82m') });
+    const sp = ew.speak({ model: 'kokoro-82m', voice: r.voice.value, speed: +r.speed.value, input: `Hi, I'm ${name}. Talk over me whenever you like.`, onProgress: loaderFor('voice', 'kokoro-82m'), ...dev('voice') });
     for await (const c of sp) pl.push(c.samples, c.sampleRate);
     badge('voice', 'ready', 'ok');
   });
@@ -3804,7 +3824,12 @@ for await (const heard of microphone.utterances()) {
     tick();
     timers.set(id, setInterval(tick, 1000));
   }
-  setState('off');
+  if (LITE) {
+    r.ohint.textContent = 'Phone mode: lean models (about 1.4 GB). Press Start and speak.';
+    $('.vn[data-n="stt"] em', root).textContent = 'not loaded · wasm';
+    $('.vn[data-n="voice"] em', root).textContent = 'not loaded · wasm';
+  }
+  setState('off', LITE ? 'Phone mode: lean models (about 1.4 GB). Press Start and speak.' : undefined);
 })();
 
 /* =================================================================== models grid */
