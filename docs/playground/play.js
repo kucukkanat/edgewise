@@ -461,110 +461,521 @@ const STT = ids((m) => m.verb === 'generate' && m.accepts.includes('audio'));
 
 /* =================================================================== generate */
 
+/** Minimal Markdown for chat bubbles: bold, italics, inline code and lists. Escapes everything else. */
+function md(text) {
+  const inline = (t) =>
+    esc(t)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>');
+  return text
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block.split('\n');
+      if (lines.every((l) => /^\s*([-*•]|\d+[.)])\s+/.test(l))) {
+        const ordered = /^\s*\d/.test(lines[0]);
+        const items = lines.map((l) => `<li>${inline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ''))}</li>`).join('');
+        return ordered ? `<ol>${items}</ol>` : `<ul>${items}</ul>`;
+      }
+      return `<p>${lines.map(inline).join('<br>')}</p>`;
+    })
+    .join('');
+}
+
+/* ---------- tools for the agent chat: no eval, just small parsers ---------- */
+
+/** A safe arithmetic evaluator (recursive descent). */
+function calc(src) {
+  const s = String(src).replace(/×/g, '*').replace(/÷/g, '/').replace(/,/g, '').toLowerCase();
+  let i = 0;
+  const FN = { sqrt: Math.sqrt, sin: Math.sin, cos: Math.cos, tan: Math.tan, log: Math.log10, ln: Math.log, abs: Math.abs, round: Math.round, floor: Math.floor, ceil: Math.ceil, exp: Math.exp };
+  const ws = () => {
+    while (s[i] === ' ') i++;
+  };
+  const peek = () => (ws(), s[i]);
+  const fail = (m) => {
+    throw new Error(`${m} at position ${i + 1} of "${src}"`);
+  };
+  function primary() {
+    const c = peek();
+    if (c === '(') {
+      i++;
+      const v = expr();
+      if (peek() !== ')') fail('Missing )');
+      i++;
+      return v;
+    }
+    if (c === '-') return (i++, -primary());
+    if (c === '+') return (i++, primary());
+    const num = /^\d*\.?\d+(e[+-]?\d+)?/.exec(s.slice(i));
+    if (num) {
+      i += num[0].length;
+      let v = parseFloat(num[0]);
+      if (peek() === '%') (i++, (v /= 100));
+      return v;
+    }
+    const id = /^[a-z]+/.exec(s.slice(i));
+    if (id) {
+      i += id[0].length;
+      if (id[0] === 'pi') return Math.PI;
+      if (id[0] === 'e') return Math.E;
+      if (id[0] === 'of') fail('Unexpected "of"');
+      const f = FN[id[0]];
+      if (!f) fail(`Unknown function ${id[0]}`);
+      return f(primary());
+    }
+    fail('Expected a number');
+  }
+  function power() {
+    const b = primary();
+    if (peek() === '^') return (i++, b ** power());
+    return b;
+  }
+  function term() {
+    let v = power();
+    for (;;) {
+      const c = peek();
+      if (c === '*') (i++, (v *= power()));
+      else if (c === '/') (i++, (v /= power()));
+      else return v;
+    }
+  }
+  function expr() {
+    let v = term();
+    for (;;) {
+      const c = peek();
+      if (c === '+') (i++, (v += term()));
+      else if (c === '-') (i++, (v -= term()));
+      else return v;
+    }
+  }
+  const v = expr();
+  if (peek() !== undefined) fail('Unexpected character');
+  if (!Number.isFinite(v)) throw new Error('The result is not a finite number.');
+  return Math.round(v * 1e10) / 1e10;
+}
+
+/** Unit conversion for a handful of everyday units. */
+function convert(value, from, to) {
+  const norm = (u) => String(u).toLowerCase().replace(/[°\s.]/g, '').replace(/s$/, '');
+  const alias = { kilometer: 'km', kilometre: 'km', mile: 'mi', meter: 'm', metre: 'm', feet: 'ft', foot: 'ft', centimeter: 'cm', centimetre: 'cm', inche: 'in', inch: 'in', kilogram: 'kg', kilo: 'kg', pound: 'lb', gram: 'g', ounce: 'oz', liter: 'l', litre: 'l', gallon: 'gal', celsiu: 'c', celsius: 'c', fahrenheit: 'f' };
+  const f = alias[norm(from)] ?? norm(from);
+  const t = alias[norm(to)] ?? norm(to);
+  if (f === 'c' && t === 'f') return Math.round((value * 9) / 5 + 32);
+  if (f === 'f' && t === 'c') return Math.round((((value - 32) * 5) / 9) * 100) / 100;
+  const base = { km: ['len', 1000], mi: ['len', 1609.344], m: ['len', 1], ft: ['len', 0.3048], cm: ['len', 0.01], in: ['len', 0.0254], kg: ['mass', 1], lb: ['mass', 0.45359237], g: ['mass', 0.001], oz: ['mass', 0.0283495], l: ['vol', 1], gal: ['vol', 3.78541] };
+  const a = base[f];
+  const b = base[t];
+  if (!a || !b) throw new Error(`Cannot convert ${from} to ${to}.`);
+  if (a[0] !== b[0]) throw new Error(`${from} and ${to} measure different things.`);
+  return Math.round(((value * a[1]) / b[1]) * 10000) / 10000;
+}
+
 CASES.generate = [
   {
     id: 'chat',
-    title: 'Stream a reply',
-    sub: 'token by token',
+    title: 'Agent chat',
+    sub: 'system prompt · tools',
     render(panel, slot) {
-      const presets = ['Write a haiku about WebGPU.', 'Explain RAG to a five-year-old in three sentences.', 'Give me three names for a bakery that sells sourdough.', 'What are three good uses for a small language model inside a web page?'];
+      const PERSONAS = {
+        Assistant: 'You are a helpful assistant running entirely inside the user\'s web browser. Be concise. Use a tool whenever it gives a more reliable answer than guessing, for example for arithmetic, dates, unit conversions and notes.',
+        Pirate: 'You are a cheerful pirate. Answer every question correctly, but in pirate speak. Use your tools when numbers are involved, arr.',
+        Engineer: 'You are a terse senior engineer. Reply in at most three sentences. Prefer exact numbers; always use the calculator for arithmetic.',
+        Tutor: 'You are a patient tutor. Explain step by step and end with one short question that checks understanding.',
+      };
+      const notes = [];
+      // Every tool runs in this tab. Only "weather" touches the network, and it is off by default.
+      const TOOLS = {
+        calculator: {
+          on: true,
+          label: 'Calculator',
+          note: 'exact arithmetic: + − × ÷ ^ % sqrt sin cos log pi',
+          description: 'Evaluate an arithmetic expression exactly. Supports + - * / ^ %, parentheses, sqrt, sin, cos, tan, log, ln, abs, round, pi and e.',
+          schema: { type: 'object', properties: { expression: { type: 'string', description: 'for example (17 * 23) / 4' } }, required: ['expression'] },
+          run: ({ expression }) => ({ expression, result: calc(expression) }),
+        },
+        get_time: {
+          on: true,
+          label: 'Clock',
+          note: 'the date and time, in any time zone',
+          description: 'Get the current date and time, optionally in an IANA time zone such as Europe/Amsterdam or Asia/Tokyo.',
+          schema: { type: 'object', properties: { timezone: { type: 'string' } } },
+          run: ({ timezone }) => {
+            const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+            return { timezone: tz, now: new Date().toLocaleString('en-GB', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' }) };
+          },
+        },
+        convert_units: {
+          on: true,
+          label: 'Unit converter',
+          note: 'km/mi, kg/lb, °C/°F, m/ft, l/gal, cm/in',
+          description: 'Convert a value between units: km, mi, m, ft, cm, in, kg, lb, g, oz, l, gal, c, f.',
+          schema: { type: 'object', properties: { value: { type: 'number' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] },
+          run: ({ value, from, to }) => ({ value, from, to, result: convert(value, from, to) }),
+        },
+        roll_dice: {
+          on: false,
+          label: 'Dice',
+          note: 'random rolls, for games and decisions',
+          description: 'Roll dice and return each result.',
+          schema: { type: 'object', properties: { count: { type: 'integer', minimum: 1, maximum: 20 }, sides: { type: 'integer', minimum: 2, maximum: 1000 } }, required: ['sides'] },
+          run: ({ count = 1, sides }) => {
+            const rolls = Array.from({ length: Math.min(20, count) }, () => 1 + Math.floor(Math.random() * sides));
+            return { rolls, total: rolls.reduce((a, b) => a + b, 0) };
+          },
+        },
+        save_note: {
+          on: true,
+          label: 'Notes',
+          note: 'remembers things for this session (save_note, list_notes)',
+          description: 'Save a short note for later in this conversation.',
+          schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+          run: ({ text }) => (notes.push(text), { saved: text, count: notes.length }),
+          extra: {
+            list_notes: {
+              description: 'List every note saved so far.',
+              schema: { type: 'object', properties: {} },
+              run: () => ({ notes }),
+            },
+          },
+        },
+        get_weather: {
+          on: false,
+          label: 'Weather',
+          note: 'uses the network: sends the city to Open-Meteo',
+          net: true,
+          description: 'Get the current weather for a city.',
+          schema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+          run: async ({ city }) => {
+            const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(city)}`).then((x) => x.json());
+            const p = g.results?.[0];
+            if (!p) throw new Error(`No place called ${city}.`);
+            const w = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&current=temperature_2m,wind_speed_10m,precipitation`).then((x) => x.json());
+            return { place: `${p.name}, ${p.country}`, temperature_c: w.current?.temperature_2m, wind_kmh: w.current?.wind_speed_10m, precipitation_mm: w.current?.precipitation };
+          },
+        },
+      };
+      const starters = ['What is 17% of 2,349, rounded to two decimals?', 'What time is it in Tokyo right now?', 'Convert 42 km to miles, then 180 lb to kg.', 'Remember that my train leaves at 18:05 from platform 4.', 'What did I ask you to remember?', 'Roll two 20-sided dice.'];
       const r = layout(
         panel,
-        `${header('Chat, without a server', 'Small language models write straight into the page. Pick a model and watch it stream.')}
-        <div class="field"><label>Prompt</label><textarea data-r="in">${presets[0]}</textarea>${presetChips(presets)}</div>
-        <div class="field"><label>Model</label><div data-r="pick"></div></div>
-        <div class="field"><label>Creativity (temperature)</label><div class="range"><input type="range" data-r="temp" min="0" max="1.2" step="0.1" value="0.3"><output data-r="tempv">0.3</output></div></div>
-        <div class="row"><button class="run" data-r="run">Generate <small data-r="sz"></small></button><button class="run secondary" data-r="stop" hidden>Stop</button></div>
-        <div class="status" data-r="st"></div>`,
-        `<div class="meters"><div class="meter"><span>first token</span><b data-r="ttft">–</b></div><div class="meter"><span>speed</span><b data-r="tps">–</b></div><div class="meter"><span>tokens</span><b data-r="ntok">–</b></div></div>
-        <div class="screen empty" data-r="out" data-empty="The reply streams here."><div class="stream" data-r="text"></div></div>`,
+        `${header('An agent in your tab', 'A system prompt, a running conversation and tools the model can call. Toggle tools, tweak the sampling and watch each call happen. Everything runs here.')}
+        <div class="field"><label>System prompt</label><textarea data-r="sys" rows="4">${esc(PERSONAS.Assistant)}</textarea><div class="chips" data-r="personas">${Object.keys(PERSONAS).map((k, i) => `<button class="chip${i ? '' : ' on'}" data-p="${k}">${k}</button>`).join('')}</div></div>
+        <div class="field"><label>Tools</label><div class="toolset" data-r="tools">${Object.entries(TOOLS)
+          .map(([k, t]) => `<label class="tooltog${t.net ? ' net' : ''}"><input type="checkbox" data-t="${k}" ${t.on ? 'checked' : ''}><span><b>${t.label}</b><small>${t.note}</small></span></label>`)
+          .join('')}</div>
+          <label class="check"><input type="checkbox" data-r="approve"> <span>Ask me before each tool call</span></label></div>
+        <div class="field"><label>Model</label><div data-r="pick"></div><div class="ms" data-r="toolwarn"></div></div>
+        <details class="adv" open><summary>Sampling</summary>
+          <div class="field"><label>Temperature</label><div class="range"><input type="range" data-r="temp" min="0" max="1.5" step="0.05" value="0.3"><output data-r="tempv">0.30</output></div></div>
+          <div class="field"><label>Top-p</label><div class="range"><input type="range" data-r="topp" min="0.1" max="1" step="0.05" value="1"><output data-r="toppv">1.00</output></div></div>
+          <div class="field"><label>Max tokens per reply</label><div class="range"><input type="range" data-r="maxt" min="32" max="1024" step="32" value="384"><output data-r="maxtv">384</output></div></div>
+          <div class="field"><label>Max tool rounds</label><div class="range"><input type="range" data-r="steps" min="1" max="8" step="1" value="4"><output data-r="stepsv">4</output></div></div>
+          <div class="field"><label>History sent to the model</label><div class="range"><input type="range" data-r="hist" min="2" max="40" step="2" value="16"><output data-r="histv">16 msgs</output></div></div>
+          <div class="field"><label>Stop sequences (comma separated)</label><input type="text" data-r="stop" placeholder="optional, e.g. ###"></div>
+        </details>`,
+        `<div class="meters"><div class="meter"><span>first token</span><b data-r="ttft">–</b></div><div class="meter"><span>speed</span><b data-r="tps">–</b></div><div class="meter"><span>tool calls</span><b data-r="ncalls">0</b></div><div class="meter"><span>history</span><b data-r="nmsg">0</b></div></div>
+        <div class="chatwin" data-r="win"><div class="msg ai intro">Hi! I'm a small model running on your device. Try one of these, or ask anything.<div class="chips" data-r="starters">${starters.map((s, i) => `<button class="chip" data-i="${i}">${esc(s)}</button>`).join('')}</div></div></div>
+        <form class="composer" data-r="form"><textarea data-r="in" rows="1" placeholder="Message the model… (Enter to send, Shift+Enter for a new line)"></textarea><button class="run" data-r="send" type="submit">Send <small data-r="sz"></small></button><button class="run secondary" data-r="stopb" type="button" hidden>Stop</button></form>
+        <div class="row"><button class="chip" data-r="clear" type="button">Clear chat</button><span class="status" data-r="st"></span></div>`,
       );
-      const pk = picker(TEXT_LMS, 'lfm2.5-350m', () => (sz(), code.refresh()));
+      const pk = picker(TEXT_LMS, 'lfm2.5-350m', () => (sz(), warn(), code.refresh()));
       r.pick.append(pk.el);
       const sz = () => (r.sz.textContent = sizeLabel(pk.value));
+      const warn = () => {
+        const m = byId[pk.value];
+        r.toolwarn.textContent = m && !m.features.includes('tools') && enabled().length ? `${pk.value} has no tool calling, so tools are skipped with this model.` : '';
+      };
       sz();
-      wirePresets(r, presets, (p) => ((r.in.value = p), code.refresh()));
-      r.temp.addEventListener('input', () => ((r.tempv.textContent = r.temp.value), code.refresh()));
-      r.in.addEventListener('input', () => code.refresh());
-      const code = codeDrawer(
-        () => `import { generate } from 'edgewise';
+      const sliders = [
+        ['temp', 'tempv', (v) => (+v).toFixed(2)],
+        ['topp', 'toppv', (v) => (+v).toFixed(2)],
+        ['maxt', 'maxtv', (v) => v],
+        ['steps', 'stepsv', (v) => v],
+        ['hist', 'histv', (v) => `${v} msgs`],
+      ];
+      for (const [k, o, f] of sliders) r[k].addEventListener('input', () => ((r[o].textContent = f(r[k].value)), code.refresh()));
+      r.personas.addEventListener('click', (e) => {
+        const k = e.target.dataset.p;
+        if (!k) return;
+        r.sys.value = PERSONAS[k];
+        $$('.chip', r.personas).forEach((c) => c.classList.toggle('on', c.dataset.p === k));
+        code.refresh();
+      });
+      r.sys.addEventListener('input', () => code.refresh());
+      r.stop.addEventListener('input', () => code.refresh());
+      r.tools.addEventListener('change', () => (warn(), code.refresh()));
+      const enabled = () => $$('input[data-t]', r.tools).filter((c) => c.checked).map((c) => c.dataset.t);
+      const code = codeDrawer(() => {
+        const on = enabled();
+        const stops = r.stop.value.split(',').map((s) => s.trim()).filter(Boolean);
+        return `import { generate, tool } from 'edgewise';
+import { z } from 'zod';
 
-const run = generate({
-  model: ${q(pk.value)},
-  input: ${q(short(r.in.value))},
-  temperature: ${r.temp.value},
-  maxTokens: 320,
-});
-for await (const delta of run) output.textContent += delta;
-const { usage, info } = await run; // info.device: 'webgpu' | 'wasm'`,
-      );
+const tools = {
+${on.map((k) => `  ${k}: tool({ description: ${q(short(TOOLS[k].description, 60))}, input: z.object({ … }), execute: ${k} }),`).join('\n') || '  // no tools enabled'}
+};
+
+let messages = [];
+async function send(text) {
+  messages.push({ role: 'user', content: text });
+  const run = generate({
+    model: ${q(pk.value)},
+    system: ${q(short(r.sys.value, 70))},
+    messages: messages.slice(-${r.hist.value}),
+    tools,
+    maxSteps: ${r.steps.value},
+    temperature: ${(+r.temp.value).toFixed(2)},
+    topP: ${(+r.topp.value).toFixed(2)},
+    maxTokens: ${r.maxt.value},${stops.length ? `\n    stop: [${stops.map(q).join(', ')}],` : ''}${r.approve.checked ? '\n    approve: (call) => confirm(`Run ${call.name}?`),' : ''}
+  });
+  for await (const e of run.events) {
+    if (e.type === 'text-delta') bubble.textContent += e.delta;
+    if (e.type === 'tool-call') showCall(e.call);
+  }
+  messages = (await run).messages.filter((m) => m.role !== 'system');
+}`;
+      });
+      r.approve.addEventListener('change', () => code.refresh());
       slot.append(code);
-      let ac;
-      r.stop.addEventListener('click', () => ac?.abort());
-      r.run.addEventListener('click', () =>
-        runBtn(r.run, r.st, async () => {
+      warn();
+
+      /* ---------- conversation ---------- */
+      let history = [];
+      let ac = null;
+      let calls = 0;
+      const scroll = () => (r.win.scrollTop = r.win.scrollHeight);
+      const bubble = (who, text = '') => {
+        const d = document.createElement('div');
+        d.className = `msg ${who}`;
+        if (text) d.textContent = text;
+        r.win.append(d);
+        scroll();
+        return d;
+      };
+      r.clear.addEventListener('click', () => {
+        ac?.abort();
+        history = [];
+        notes.length = 0;
+        calls = 0;
+        r.ncalls.textContent = '0';
+        r.nmsg.textContent = '0';
+        $$('.msg:not(.intro)', r.win).forEach((m) => m.remove());
+      });
+      r.starters.addEventListener('click', (e) => {
+        const b = e.target.closest('.chip');
+        if (b) ((r.in.value = starters[+b.dataset.i]), r.form.requestSubmit());
+      });
+      r.in.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) (e.preventDefault(), r.form.requestSubmit());
+      });
+      r.in.addEventListener('input', () => ((r.in.style.height = 'auto'), (r.in.style.height = `${Math.min(160, r.in.scrollHeight)}px`)));
+      r.stopb.addEventListener('click', () => ac?.abort());
+      // Approval: an inline card with Allow / Deny, resolved by the visitor's click.
+      const askApproval = (call) =>
+        new Promise((resolve) => {
+          const d = bubble('approve');
+          d.innerHTML = `<span>Run <b>${esc(call.name)}</b> <code>${esc(JSON.stringify(call.input))}</code>?</span><button class="chip on" data-a="1">Allow</button><button class="chip" data-a="0">Deny</button>`;
+          d.addEventListener('click', (e) => {
+            const a = e.target.dataset.a;
+            if (a === undefined) return;
+            d.innerHTML = `<span>${a === '1' ? '✓ allowed' : '✗ denied'} <b>${esc(call.name)}</b></span>`;
+            resolve(a === '1');
+          });
+        });
+      r.form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = r.in.value.trim();
+        if (!text || r.send.disabled) return;
+        r.in.value = '';
+        r.in.style.height = 'auto';
+        bubble('you', text);
+        history.push({ role: 'user', content: text });
+        runBtn(r.send, r.st, async () => {
           const ew = await lib;
           const tr = tracker(pk.value);
           ac = new AbortController();
-          r.stop.hidden = false;
-          r.text.textContent = '';
-          r.out.classList.remove('empty');
-          for (const k of ['ttft', 'tps', 'ntok']) r[k].textContent = '–';
-          const run = ew.generate({ model: pk.value, input: r.in.value, temperature: +r.temp.value, maxTokens: 320, allowPreview: true, onProgress: tr.onProgress, signal: ac.signal });
+          r.stopb.hidden = false;
+          const m = byId[pk.value];
+          const on = m?.features.includes('tools') ? enabled() : [];
+          const tools = {};
+          for (const k of on) {
+            const t = TOOLS[k];
+            tools[k] = ew.tool({ description: t.description, input: { jsonSchema: t.schema }, execute: async (a) => t.run(a) });
+            for (const [xk, xt] of Object.entries(t.extra ?? {})) tools[xk] = ew.tool({ description: xt.description, input: { jsonSchema: xt.schema }, execute: async (a) => xt.run(a) });
+          }
+          const stops = r.stop.value.split(',').map((s) => s.trim()).filter(Boolean);
+          let out = bubble('ai');
+          out.classList.add('typing');
+          const start = performance.now();
           let t0 = 0;
           let n = 0;
-          const start = performance.now();
+          const run = ew.generate({
+            model: pk.value,
+            system: r.sys.value,
+            messages: history.slice(-+r.hist.value),
+            ...(on.length ? { tools, maxSteps: +r.steps.value } : {}),
+            temperature: +r.temp.value,
+            topP: +r.topp.value,
+            maxTokens: +r.maxt.value,
+            ...(stops.length ? { stop: stops } : {}),
+            ...(r.approve.checked ? { approve: askApproval } : {}),
+            allowPreview: true,
+            signal: ac.signal,
+            onProgress: tr.onProgress,
+          });
           try {
-            for await (const d of run) {
-              if (!t0) {
-                t0 = performance.now();
+            for await (const ev of run.events) {
+              if (ev.type === 'text-delta') {
+                if (!t0) ((t0 = performance.now()), tr.done(), (r.ttft.innerHTML = `${Math.round(t0 - start)}<small>ms</small>`));
+                out.classList.remove('typing');
+                n++;
+                streamInto(out, ev.delta);
+                const s = (performance.now() - t0) / 1000;
+                if (s > 0.2) r.tps.innerHTML = `${(n / s).toFixed(1)}<small>tok/s</small>`;
+                scroll();
+              } else if (ev.type === 'tool-call') {
                 tr.done();
-                r.ttft.innerHTML = `${Math.round(t0 - start)}<small>ms</small>`;
+                calls++;
+                r.ncalls.textContent = calls;
+                // A tool call ends the current text bubble; the answer continues in a new one.
+                if (!out.textContent) out.remove();
+                else ((out.innerHTML = md(out.textContent)), out.classList.add('md'));
+                const c = bubble('toolcall');
+                c.dataset.id = ev.call.id;
+                c.innerHTML = `<span class="fn">${esc(ev.call.name)}</span><span class="ar">${esc(JSON.stringify(ev.call.input))}</span><span class="res">running…</span>`;
+                out = bubble('ai');
+                out.classList.add('typing');
+              } else if (ev.type === 'tool-result') {
+                const c = $$('.msg.toolcall', r.win).find((x) => x.dataset.id === ev.result.id) ?? $$('.msg.toolcall', r.win).at(-1);
+                if (c) {
+                  $('.res', c).textContent = ev.result.error ? `✗ ${ev.result.error}` : `→ ${short(JSON.stringify(ev.result.output), 90)}`;
+                  c.classList.add(ev.result.error ? 'bad' : 'ok');
+                }
               }
-              n++;
-              streamInto(r.text, d);
-              r.out.scrollTop = r.out.scrollHeight;
-              r.ntok.textContent = n;
-              const s = (performance.now() - t0) / 1000;
-              if (s > 0.2) r.tps.innerHTML = `${(n / s).toFixed(1)}<small>tok/s</small>`;
             }
             const res = await run;
+            if (!out.textContent) {
+              if (res.text) out.textContent = res.text;
+              else out.remove();
+            }
+            out.classList.remove('typing');
+            if (out.isConnected && out.textContent) ((out.innerHTML = md(out.textContent)), out.classList.add('md'));
+            history = res.messages.filter((x) => x.role !== 'system');
+            r.nmsg.textContent = history.length;
             return res.info;
+          } catch (err) {
+            out.classList.remove('typing');
+            if (!out.textContent) out.remove();
+            history.pop();
+            throw err;
           } finally {
-            r.stop.hidden = true;
+            r.stopb.hidden = true;
             tr.done();
           }
-        }),
-      );
+        });
+      });
     },
   },
   {
     id: 'extract',
-    title: 'Email → JSON',
+    title: 'Text → JSON',
     sub: 'structured output',
     render(panel, slot) {
-      const presets = [
-        { label: 'Meeting request', text: "hey!! it's Priya from Northwind Traders — could we grab coffee next thursday (Oct 8) around 3pm at Foodhallen in Amsterdam? want to talk about renewing our annual support contract. my cell is +31 6 1234 5678, or priya.shah@northwind.example" },
-        { label: 'Complaint', text: 'Hello, this is Marco Rossi at Bellavista Hotels. Order #88213 arrived on 2026-09-21 with two broken lamps. Please send replacements to Via Roma 12, Milan before our reopening. Reach me at m.rossi@bellavista.example or 02 555 0199.' },
-        { label: 'Job lead', text: 'Hi — Jenna Kowalski here, recruiting for Lumen Labs. We have a staff engineer role (remote, EU). Free for a 30-min call on 14 October at 10:00 CET? Email jenna@lumenlabs.example. Thanks!' },
+      // Each preset brings its own text and schema; every field of the schema is editable.
+      const S = (name, type, description, extra = {}) => ({ name, type, description, required: true, ...extra });
+      const PRESETS = [
+        {
+          label: 'Meeting request',
+          text: "hey!! it's Priya from Northwind Traders — could we grab coffee next thursday (Oct 8) around 3pm at Foodhallen in Amsterdam? want to talk about renewing our annual support contract. my cell is +31 6 1234 5678, or priya.shah@northwind.example",
+          fields: [S('person', 'string', 'Who wrote it'), S('company', 'string', 'Their company'), S('email', 'string', 'Email address'), S('phone', 'string', 'Phone number'), S('date', 'string', 'Date mentioned, as YYYY-MM-DD'), S('time', 'string', 'Time mentioned, 24h HH:MM'), S('place', 'string', 'Where to meet'), S('topic', 'enum', 'What it is about', { values: ['sales', 'support', 'partnership', 'hiring', 'other'] })],
+        },
+        {
+          label: 'Order complaint',
+          text: 'Hello, this is Marco Rossi at Bellavista Hotels. Order #88213 arrived on 2026-09-21 with two broken lamps and a missing mirror. Please send replacements to Via Roma 12, Milan before our reopening on the 30th. This is really urgent. Reach me at m.rossi@bellavista.example.',
+          fields: [S('customer', 'string', 'Name of the person'), S('order_id', 'integer', 'Order number'), S('problems', 'string[]', 'Each problem, as a short phrase'), S('ship_to', 'string', 'Delivery address'), S('urgent', 'boolean', 'Whether they say it is urgent'), S('sentiment', 'enum', 'How they feel', { values: ['calm', 'annoyed', 'angry'] })],
+        },
+        {
+          label: 'Job post',
+          text: 'Lumen Labs is hiring a Staff Frontend Engineer (remote within the EU, 4 days a week). You bring 8+ years of TypeScript, React and WebGPU or WebGL experience. Salary €95k–€120k plus equity. Apply by 31 October via jobs@lumenlabs.example.',
+          fields: [S('company', 'string', 'Hiring company'), S('title', 'string', 'Job title'), S('remote', 'boolean', 'Whether it is remote'), S('years', 'integer', 'Minimum years of experience'), S('skills', 'string[]', 'Required skills'), S('salary_min', 'number', 'Lowest salary in euros'), S('salary_max', 'number', 'Highest salary in euros'), S('deadline', 'string', 'Application deadline, as YYYY-MM-DD', { required: false })],
+        },
       ];
-      const fields = { person: 'Who wrote it', company: 'Their company', email: 'Email address', phone: 'Phone number', date: 'Date mentioned, as YYYY-MM-DD if possible', place: 'Place or address', request: 'What they want, in one short sentence' };
+      let fields = structuredClone(PRESETS[0].fields);
+      const TYPES = ['string', 'number', 'integer', 'boolean', 'enum', 'string[]'];
       const r = layout(
         panel,
-        `${header('Messy text in, typed object out', 'Pass a JSON Schema (or Zod). The object streams as it fills in, then gets validated.')}
-        <div class="field"><label>Unstructured text</label><textarea data-r="in" rows="5">${esc(presets[0].text)}</textarea>${presetChips(presets)}</div>
+        `${header('Messy text in, typed object out', 'Design the schema yourself: add fields, change their types, describe them, make them optional. The object streams in as the model fills it, then gets validated.')}
+        <div class="field"><label>Unstructured text</label><textarea data-r="in" rows="5">${esc(PRESETS[0].text)}</textarea>${presetChips(PRESETS)}</div>
+        <div class="field"><label>Schema</label><div class="fields" data-r="fields"></div><button class="chip sm" data-r="add" type="button">+ field</button></div>
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
+        <details class="adv"><summary>Sampling</summary>
+          <div class="field"><label>Temperature</label><div class="range"><input type="range" data-r="temp" min="0" max="1" step="0.05" value="0"><output data-r="tempv">0.00</output></div></div>
+          <div class="field"><label>Max tokens</label><div class="range"><input type="range" data-r="maxt" min="64" max="1024" step="32" value="384"><output data-r="maxtv">384</output></div></div>
+        </details>
         <div class="row"><button class="run" data-r="run">Extract <small data-r="sz"></small></button></div>
         <div class="status" data-r="st"></div>`,
-        `<div class="card"><dl class="kv" data-r="kv">${Object.keys(fields).map((k) => `<dt>${k}</dt><dd data-k="${k}"></dd>`).join('')}</dl></div>
+        `<div class="card"><dl class="kv" data-r="kv"></dl></div>
+        <div class="lbl">JSON · <span data-r="valid" class="ms">not run yet</span></div>
         <div class="screen" style="min-height:0;flex:0 0 auto"><pre class="json" data-r="json">{ }</pre></div>`,
       );
+      $('.output', panel).classList.add('sticky');
       const pk = picker(JSON_LMS, 'lfm2.5-350m', () => (sz(), code.refresh()));
       r.pick.append(pk.el);
       const sz = () => (r.sz.textContent = sizeLabel(pk.value));
       sz();
-      wirePresets(r, presets, (p) => ((r.in.value = p.text), code.refresh()));
-      const schema = { type: 'object', properties: Object.fromEntries(Object.entries(fields).map(([k, d]) => [k, { type: 'string', description: d }])), required: Object.keys(fields) };
+      for (const [k, o, f] of [
+        ['temp', 'tempv', (v) => (+v).toFixed(2)],
+        ['maxt', 'maxtv', (v) => v],
+      ])
+        r[k].addEventListener('input', () => ((r[o].textContent = f(r[k].value)), code.refresh()));
+      const key = (s) => String(s).trim().replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '') || 'field';
+      const drawFields = () => {
+        r.fields.innerHTML = fields
+          .map(
+            (f, i) => `<div class="frow"><input type="text" class="fname" data-i="${i}" data-f="name" value="${esc(f.name)}" aria-label="field name"><input type="text" data-i="${i}" data-f="description" value="${esc(f.description)}" placeholder="describe it for the model" aria-label="description"><select data-i="${i}" data-f="type">${TYPES.map((t) => `<option${t === f.type ? ' selected' : ''}>${t}</option>`).join('')}</select><label class="req" title="required"><input type="checkbox" data-i="${i}" data-f="required" ${f.required ? 'checked' : ''}>req</label><button class="x" data-rm="${i}" aria-label="remove field" ${fields.length <= 1 ? 'disabled' : ''}>×</button>${f.type === 'enum' ? `<input type="text" class="fdesc" data-i="${i}" data-f="values" value="${esc((f.values ?? []).join(', '))}" placeholder="allowed values, comma separated">` : ''}</div>`,
+          )
+          .join('');
+        r.kv.innerHTML = fields.map((f) => `<dt>${esc(key(f.name))}</dt><dd data-k="${esc(key(f.name))}"></dd>`).join('');
+      };
+      const changed = (redraw) => {
+        if (redraw) drawFields();
+        else r.kv.innerHTML = fields.map((f) => `<dt>${esc(key(f.name))}</dt><dd data-k="${esc(key(f.name))}"></dd>`).join('');
+        code.refresh();
+      };
+      r.fields.addEventListener('input', (e) => {
+        const f = fields[+e.target.dataset.i];
+        if (!f) return;
+        const k = e.target.dataset.f;
+        if (k === 'required') f.required = e.target.checked;
+        else if (k === 'values') f.values = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
+        else if (k !== 'type') f[k] = e.target.value;
+        changed(false);
+      });
+      r.fields.addEventListener('change', (e) => {
+        if (e.target.dataset.f !== 'type') return;
+        const f = fields[+e.target.dataset.i];
+        f.type = e.target.value;
+        if (f.type === 'enum' && !f.values?.length) f.values = ['a', 'b', 'c'];
+        changed(true);
+      });
+      r.fields.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-rm]');
+        if (b) (fields.splice(+b.dataset.rm, 1), changed(true));
+      });
+      r.add.addEventListener('click', () => (fields.push(S(`field${fields.length + 1}`, 'string', 'describe it')), changed(true)));
+      wirePresets(r, PRESETS, (p) => ((r.in.value = p.text), (fields = structuredClone(p.fields)), changed(true)));
+      const jsonType = (f) =>
+        f.type === 'enum' ? { type: 'string', enum: f.values } : f.type === 'string[]' ? { type: 'array', items: { type: 'string' } } : { type: f.type };
+      const schema = () => ({
+        type: 'object',
+        properties: Object.fromEntries(fields.map((f) => [key(f.name), { ...jsonType(f), description: f.description }])),
+        required: fields.filter((f) => f.required).map((f) => key(f.name)),
+      });
+      const zod = (f) => {
+        const base = f.type === 'string' ? 'z.string()' : f.type === 'number' ? 'z.number()' : f.type === 'integer' ? 'z.number().int()' : f.type === 'boolean' ? 'z.boolean()' : f.type === 'enum' ? `z.enum([${(f.values ?? []).map(q).join(', ')}])` : 'z.array(z.string())';
+        return `${base}.describe(${q(f.description)})${f.required ? '' : '.optional()'}`;
+      };
       const code = codeDrawer(
         () => `import { generate } from 'edgewise';
 import { z } from 'zod';
@@ -572,38 +983,69 @@ import { z } from 'zod';
 const run = generate({
   model: ${q(pk.value)},
   input: ${q(short(r.in.value, 60))},
+  temperature: ${(+r.temp.value).toFixed(2)},
+  maxTokens: ${r.maxt.value},
   schema: z.object({
-${Object.keys(fields).map((k) => `    ${k}: z.string(),`).join('\n')}
+${fields.map((f) => `    ${key(f.name)}: ${zod(f)},`).join('\n')}
   }),
 });
 for await (const partial of run) render(partial); // fields fill in as they stream
 const { object } = await run;                     // typed and validated`,
       );
       slot.append(code);
+      drawFields();
+      const fmt = (v) => (Array.isArray(v) ? v.join(' · ') : typeof v === 'boolean' ? (v ? '✓ yes' : '✗ no') : String(v));
+      // Checks the final object against the visitor's schema, so type mistakes are visible.
+      const check = (o) => {
+        const errs = [];
+        for (const f of fields) {
+          const v = o?.[key(f.name)];
+          if (v === undefined || v === null || v === '') {
+            if (f.required) errs.push(`${key(f.name)} missing`);
+            continue;
+          }
+          const ok = f.type === 'string' ? typeof v === 'string' : f.type === 'number' ? typeof v === 'number' : f.type === 'integer' ? Number.isInteger(v) : f.type === 'boolean' ? typeof v === 'boolean' : f.type === 'enum' ? f.values.includes(v) : Array.isArray(v);
+          if (!ok) errs.push(`${key(f.name)} is not ${f.type === 'enum' ? `one of ${f.values.join('/')}` : `a ${f.type}`}`);
+        }
+        return errs;
+      };
       r.run.addEventListener('click', () =>
         runBtn(r.run, r.st, async () => {
           const ew = await lib;
           const tr = tracker(pk.value);
-          for (const dd of $$('dd', r.kv)) (dd.textContent = ''), dd.classList.remove('fill');
+          changed(false);
           r.json.textContent = '{ }';
-          const run = ew.generate({ model: pk.value, input: `Extract the details from this message.\n\n${r.in.value}`, schema: { jsonSchema: schema }, allowPreview: true, onProgress: tr.onProgress });
+          r.valid.textContent = 'streaming…';
           const show = (o) => {
             for (const [k, v] of Object.entries(o ?? {})) {
-              const dd = $(`dd[data-k="${k}"]`, r.kv);
-              if (dd && typeof v === 'string' && dd.textContent !== v) {
+              const dd = $(`dd[data-k="${CSS.escape(k)}"]`, r.kv);
+              const text = v == null ? '' : fmt(v);
+              if (dd && dd.textContent !== text) {
                 if (!dd.textContent) dd.classList.add('fill');
-                dd.textContent = v;
+                dd.textContent = text;
               }
             }
             r.json.textContent = JSON.stringify(o, null, 2);
           };
-          for await (const p of run) {
+          const run = ew.generate({
+            model: pk.value,
+            input: `Today is ${new Date().toISOString().slice(0, 10)}. Extract the details from this text.\n\n${r.in.value}`,
+            schema: { jsonSchema: schema() },
+            temperature: +r.temp.value,
+            maxTokens: +r.maxt.value,
+            allowPreview: true,
+            onProgress: tr.onProgress,
+          });
+          try {
+            for await (const p of run) (tr.done(), typeof p === 'object' && show(p));
+            const res = await run;
+            show(res.object);
+            const errs = check(res.object);
+            r.valid.innerHTML = errs.length ? `<span style="color:var(--warn)">⚠ ${esc(errs.join(' · '))}</span>` : '<span style="color:var(--ok)">✓ matches your schema</span>';
+            return res.info;
+          } finally {
             tr.done();
-            if (typeof p === 'object') show(p);
           }
-          const res = await run;
-          show(res.object);
-          return res.info;
         }),
       );
     },
@@ -768,12 +1210,17 @@ const { text, toolCalls } = await generate({
         panel,
         `${header('Vision on the device', 'Ask a vision-language model about a picture, or use Florence-2 for captions, OCR with regions and object boxes. Try your own photo or the camera.')}
         <div class="field"><label>Image</label><div class="thumbs" data-r="thumbs"></div><input type="file" accept="image/*" data-r="file" hidden></div>
+        <div class="field isearch" data-r="isearch" hidden><label>Search openly licensed images · Openverse</label>
+          <form class="row" data-r="sform"><input type="search" data-r="sq" placeholder="try: street sign, menu, dog, chart, handwriting" style="flex:1"><button class="run secondary" type="submit">Search</button></form>
+          <div class="chips" data-r="sugg">${['street sign', 'restaurant menu', 'handwritten note', 'bar chart', 'dog in park', 'bicycle', 'kitchen', 'poster'].map((t) => `<button class="chip" type="button">${t}</button>`).join('')}</div>
+          <div class="results" data-r="sres"></div>
+          <p class="ms">Your search words go to <a href="https://openverse.org" rel="noopener" target="_blank">Openverse</a>, which returns Creative Commons images. The model then looks at the picture on your device.</p></div>
         <div class="field"><label>Task</label><div class="chips" data-r="modes">${modes.map((m, i) => `<button class="chip${i ? '' : ' on'}" data-m="${m.id}">${m.label}</button>`).join('')}</div></div>
         <div class="field" data-r="qwrap"><label>Question</label><input type="text" data-r="in" value="What is the total, and where was it bought?"></div>
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
         <div class="row"><button class="run" data-r="run">Look <small data-r="sz"></small></button></div>
         <div class="status" data-r="st"></div>`,
-        `<div class="imgwrap" data-r="wrap"><canvas data-r="img" width="640" height="480"></canvas><div class="boxes" data-r="boxes"></div></div>
+        `<div class="imgwrap" data-r="wrap"><canvas data-r="img" width="640" height="480"></canvas><div class="boxes" data-r="boxes"></div></div><div class="credit" data-r="credit"></div>
         <div class="screen empty" data-r="out" data-empty="The answer appears here." style="min-height:100px"><div class="stream" data-r="text"></div></div>`,
       );
       // Sample images are drawn here, so the demo needs no image downloads.
@@ -785,7 +1232,7 @@ const { text, toolCalls } = await generate({
       };
       let source = 'receipt';
       let mode = 'ask';
-      r.thumbs.innerHTML = `${Object.keys(samples).map((k) => `<button class="thumb${k === source ? ' on' : ''}" data-s="${k}" aria-label="${k}"><canvas width="160" height="120"></canvas></button>`).join('')}<button class="thumb act" data-s="upload">upload</button><button class="thumb act" data-s="camera">camera</button>`;
+      r.thumbs.innerHTML = `${Object.keys(samples).map((k) => `<button class="thumb${k === source ? ' on' : ''}" data-s="${k}" aria-label="${k}"><canvas width="160" height="120"></canvas></button>`).join('')}<button class="thumb act" data-s="search">🔍 search</button><button class="thumb act" data-s="upload">upload</button><button class="thumb act" data-s="camera">camera</button>`;
       for (const b of $$('[data-s]', r.thumbs)) {
         const s = samples[b.dataset.s];
         if (s) {
@@ -814,6 +1261,7 @@ const { text, toolCalls } = await generate({
         r.img.height = Math.round(h * s);
         ctx.drawImage(src, 0, 0, r.img.width, r.img.height);
         r.boxes.innerHTML = '';
+        r.credit.textContent = '';
         $$('.thumb', r.thumbs).forEach((t) => t.classList.remove('on'));
       };
       r.file.addEventListener('change', async () => {
@@ -828,7 +1276,12 @@ const { text, toolCalls } = await generate({
         const b = e.target.closest('.thumb');
         if (!b) return;
         const k = b.dataset.s;
-        if (samples[k]) return show(k);
+        if (k === 'search') {
+          r.isearch.hidden = !r.isearch.hidden;
+          if (!r.isearch.hidden) r.sq.focus();
+          return;
+        }
+        if (samples[k]) return ((r.credit.textContent = ''), show(k));
         if (k === 'upload') return r.file.click();
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
@@ -843,6 +1296,51 @@ const { text, toolCalls } = await generate({
           r.in.value = 'What do you see? Describe it in two sentences.';
         } catch (err) {
           r.st.textContent = `camera unavailable: ${err.message}`;
+        }
+      });
+      // Openverse: Creative Commons images, with CORS on its thumbnail endpoint so the pixels can be read.
+      const search = async (term) => {
+        if (!term.trim()) return;
+        r.sq.value = term;
+        r.sres.innerHTML = '<span class="ms">searching…</span>';
+        try {
+          const res = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(term)}&page_size=18&mature=false`);
+          if (res.status === 429) throw new Error('Openverse is rate-limiting searches. Wait a minute and try again.');
+          if (!res.ok) throw new Error(`Openverse answered ${res.status}.`);
+          const data = await res.json();
+          if (!data.results?.length) return (r.sres.innerHTML = '<span class="ms">no images found</span>');
+          r.sres.innerHTML = data.results
+            .map((x, i) => `<button class="rthumb" type="button" data-i="${i}" title="${esc(x.title ?? '')}" style="animation-delay:${i * 25}ms"><img loading="lazy" crossorigin="anonymous" onerror="this.parentElement.remove()" alt="${esc(x.title ?? 'image')}" src="https://api.openverse.org/v1/images/${x.id}/thumb/"></button>`)
+            .join('');
+          r.sres.results = data.results;
+        } catch (err) {
+          r.sres.innerHTML = `<span class="ms" style="color:var(--bad)">${esc(err.message)}</span>`;
+        }
+      };
+      r.sform.addEventListener('submit', (e) => (e.preventDefault(), search(r.sq.value)));
+      r.sugg.addEventListener('click', (e) => e.target.closest('.chip') && search(e.target.textContent));
+      r.sres.addEventListener('click', async (e) => {
+        const b = e.target.closest('.rthumb');
+        if (!b) return;
+        const x = r.sres.results[+b.dataset.i];
+        $$('.rthumb', r.sres).forEach((t) => t.classList.toggle('on', t === b));
+        r.st.textContent = 'loading the image…';
+        try {
+          const blob = await fetch(`https://api.openverse.org/v1/images/${x.id}/thumb/`).then((res) => {
+            if (!res.ok) throw new Error(`the image server answered ${res.status}`);
+            return res.blob();
+          });
+          const bmp = await createImageBitmap(blob);
+          fitImage(bmp, bmp.width, bmp.height);
+          source = 'search';
+          if (mode === 'ask') r.in.value = 'Describe this image in detail.';
+          r.credit.innerHTML = `“${esc(short(x.title ?? 'Untitled', 60))}”${x.creator ? ` by ${esc(x.creator)}` : ''} · <a href="${esc(x.foreign_landing_url ?? x.url)}" rel="noopener" target="_blank">${esc(String(x.license ?? '').toUpperCase())} ${esc(x.license_version ?? '')}</a> · via Openverse`;
+          r.st.textContent = '';
+          r.out.classList.add('empty');
+          r.text.textContent = '';
+          code.refresh();
+        } catch (err) {
+          r.st.textContent = `could not load that image: ${err.message}`;
         }
       });
       let pk;
@@ -1640,14 +2138,14 @@ const GALAXY = {
 };
 const GCOL = { Space: '#5EB8FF', Cooking: '#FF8A5B', Money: '#FFB547', Health: '#3CE0C0', Code: '#A48BFF', Yours: '#FFFFFF' };
 
-function pca2(X) {
+function pcaK(X, K) {
   const n = X.length;
   const d = X[0].length;
   const mean = new Float64Array(d);
   for (const x of X) for (let j = 0; j < d; j++) mean[j] += x[j] / n;
   const C = X.map((x) => Float64Array.from(x, (v, j) => v - mean[j]));
   const pcs = [];
-  for (let k = 0; k < 2; k++) {
+  for (let k = 0; k < K; k++) {
     let v = Float64Array.from({ length: d }, (_, j) => Math.sin(j * (k + 1) * 1.7) + 0.5);
     for (let it = 0; it < 80; it++) {
       const s = C.map((x) => x.reduce((a, xv, j) => a + xv * v[j], 0));
@@ -1672,18 +2170,21 @@ CASES.embed = [
   {
     id: 'galaxy',
     title: 'Semantic galaxy',
-    sub: 'meaning as coordinates',
+    sub: 'meaning in 3D',
     render(panel, slot) {
       const r = layout(
         panel,
-        `${header('Watch meaning take shape', '40 sentences from five topics are embedded, then projected to 2D. Sentences about the same thing drift together, with no labels given to the model. Then search by meaning.')}
+        `${header('Watch meaning take shape', '40 sentences from five topics are embedded, then projected into 3D. Sentences about the same thing drift into the same cluster, and the model never sees the topic labels. Drag to orbit, scroll to zoom, click a star to see its nearest neighbours.')}
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
         <div class="row"><button class="run" data-r="run">Embed 40 sentences <small data-r="sz"></small></button></div>
-        <div class="field"><label>Search by meaning</label><input type="search" data-r="q" value="how do I get fit?" placeholder="Type a query and press Enter"></div>
-        <div class="field"><label>Add your own sentences (one per line)</label><textarea data-r="mine" rows="3" placeholder="My cat knocked the coffee off the desk."></textarea></div>
+        <div class="field"><label>Search by meaning</label><form class="row" data-r="qform"><input type="search" data-r="q" value="how do I get fit?" placeholder="Type a question and press Enter" style="flex:1"><button class="run secondary" type="submit">Search</button></form>
+          <div class="chips" data-r="qs">${['how do I get fit?', 'saving money', 'baking bread', 'bugs in my program', 'life on other planets'].map((t) => `<button class="chip" type="button">${t}</button>`).join('')}</div></div>
+        <div class="field"><label>Add your own sentences (one per line), then embed again</label><textarea data-r="mine" rows="3" placeholder="My cat knocked the coffee off the desk.\nThe stock market fell sharply today."></textarea></div>
+        <div class="row"><label class="check"><input type="checkbox" data-r="spin" checked> Auto-rotate</label><label class="check"><input type="checkbox" data-r="labels" checked> Topic labels</label></div>
         <div class="status" data-r="st"></div>
         <div class="hits" data-r="hits"></div>`,
-        `<div class="galaxy" data-r="gal"><canvas data-r="cv"></canvas><div class="gtip" data-r="tip"></div></div><div class="legend">${Object.entries(GCOL).filter(([k]) => k !== 'Yours').map(([k, c]) => `<span style="--m:${c}"><i></i>${k}</span>`).join('')}<span style="--m:#fff"><i></i>yours</span></div>`,
+        `<div class="galaxy g3d" data-r="gal"><canvas data-r="cv"></canvas><div class="gtip" data-r="tip"></div><div class="ghint">drag to orbit · scroll to zoom · click a star · double-click to reset</div></div>
+        <div class="legend" data-r="legend">${Object.entries(GCOL).map(([k, c]) => `<button class="ltype" data-g="${k}" style="--m:${c}"><i></i>${k === 'Yours' ? 'yours' : k}</button>`).join('')}<span class="ms">click a topic to focus it</span></div>`,
       );
       const pk = picker(ids((m) => m.verb === 'embed'), 'all-minilm-l6-v2', () => (sz(), code.refresh()));
       r.pick.append(pk.el);
@@ -1693,125 +2194,299 @@ CASES.embed = [
         () => `import { embed } from 'edgewise';
 import { cosine } from 'edgewise/helpers';
 
-const { embeddings } = await embed({ model: ${q(pk.value)}, values: sentences });
-const { embedding } = await embed({ model: ${q(pk.value)}, input: ${q(r.q.value)} });
+const { embeddings } = await embed({ model: ${q(pk.value)}, values: sentences, purpose: 'document' });
+const { embedding } = await embed({ model: ${q(pk.value)}, input: ${q(r.q.value)}, purpose: 'query' });
 
 const ranked = sentences
   .map((text, i) => ({ text, score: cosine(embedding, embeddings[i]) }))
-  .sort((a, b) => b.score - a.score);`,
+  .sort((a, b) => b.score - a.score);
+// The 3D view is a PCA of the embeddings: the three directions with the most variance.`,
       );
       slot.append(code);
-      r.q.addEventListener('input', () => code.refresh());
-      let items = Object.entries(GALAXY).flatMap(([g, list]) => list.map((text) => ({ text, g })));
-      // Every point starts scattered and eases to its projected position after embedding.
-      for (const it of items) Object.assign(it, { x: Math.random(), y: Math.random(), tx: Math.random(), ty: Math.random(), ph: Math.random() * 6 });
+
+      /* ---------- scene ---------- */
+      const rnd = seeded(42);
+      const sphere = () => {
+        const u = rnd() * 2 - 1;
+        const t = rnd() * Math.PI * 2;
+        const rr = Math.cbrt(rnd()) * 0.95;
+        return [rr * Math.sqrt(1 - u * u) * Math.cos(t), rr * Math.sqrt(1 - u * u) * Math.sin(t), rr * u];
+      };
+      const mk = (text, g) => {
+        const p = sphere();
+        return { text, g, p: [...p], t: [...p], ph: rnd() * 6 };
+      };
+      let items = Object.entries(GALAXY).flatMap(([g, list]) => list.map((text) => mk(text, g)));
+      const stars = Array.from({ length: 220 }, () => ({ x: rnd(), y: rnd(), s: rnd() * 1.2 + 0.2, a: rnd() * 0.5 + 0.1 }));
       let vecs = null;
       let proj = null;
-      let query = null;
+      let query = null; // { p: [x,y,z], hits: [{ i, s }], t }
+      let selected = null; // { i, hits }
+      let focus = null;
       let hover = null;
+      const cam = { yaw: 0.6, pitch: 0.35, dist: 2.7, vy: 0, vp: 0 };
+      let lastInteract = 0;
       let raf;
+      let screen = [];
+      const lerp = (a, b, k) => a + (b - a) * k;
+      const rot = ([x, y, z]) => {
+        const cy = Math.cos(cam.yaw);
+        const sy = Math.sin(cam.yaw);
+        const cp = Math.cos(cam.pitch);
+        const sp = Math.sin(cam.pitch);
+        const x1 = x * cy - z * sy;
+        const z1 = x * sy + z * cy;
+        const y1 = y * cp - z1 * sp;
+        const z2 = y * sp + z1 * cp;
+        return [x1, y1, z2];
+      };
+      const project = (p, w, h) => {
+        const [x, y, z] = rot(p);
+        const d = z + cam.dist;
+        const f = Math.min(w, h) * 0.9;
+        return { x: w / 2 + (x * f) / d, y: h / 2 + (y * f) / d, d, k: cam.dist / d };
+      };
+      const pill = (ctx, text, x, y, color, strong) => {
+        ctx.font = `${strong ? 600 : 500} 12px "Public Sans", sans-serif`;
+        const t = short(text, 46);
+        const w = ctx.measureText(t).width + 14;
+        // Keep labels inside the canvas.
+        const cw = ctx.canvas.clientWidth;
+        x = Math.max(w / 2 + 4, Math.min(cw - w / 2 - 4, x));
+        y = Math.max(30, y);
+        ctx.fillStyle = 'rgba(8,11,15,.86)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(x - w / 2, y - 26, w, 20, 7);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#EEF3F6';
+        ctx.textAlign = 'center';
+        ctx.fillText(t, x, y - 12);
+      };
       const draw = (time) => {
         raf = requestAnimationFrame(draw);
         const { ctx, w, h } = canvasFit(r.cv);
         ctx.clearRect(0, 0, w, h);
-        const P = (it) => [30 + it.x * (w - 60), 30 + it.y * (h - 60)];
-        for (const it of items) {
-          it.x += (it.tx - it.x) * 0.06;
-          it.y += (it.ty - it.y) * 0.06;
-          if (!vecs && !REDUCED) ((it.tx += Math.sin(time / 1500 + it.ph) * 0.0008), (it.ty += Math.cos(time / 1700 + it.ph) * 0.0008));
+        // starfield backdrop, drifting a little with the camera
+        for (const s of stars) {
+          ctx.fillStyle = `rgba(200,215,230,${s.a})`;
+          ctx.fillRect(((s.x * w + cam.yaw * 30) % w + w) % w, ((s.y * h + cam.pitch * 30) % h + h) % h, s.s, s.s);
         }
-        if (query) {
-          const [qx, qy] = [30 + query.x * (w - 60), 30 + query.y * (h - 60)];
-          query.hits.forEach((hit, k) => {
-            const [x, y] = P(items[hit.i]);
-            const g = ctx.createLinearGradient(qx, qy, x, y);
-            g.addColorStop(0, 'rgba(255,255,255,.9)');
+        const idle = time - lastInteract > 2500;
+        if (r.spin.checked && idle && !REDUCED) cam.yaw += 0.0022;
+        cam.yaw += cam.vy;
+        cam.pitch = Math.max(-1.35, Math.min(1.35, cam.pitch + cam.vp));
+        cam.vy *= 0.92;
+        cam.vp *= 0.92;
+        // ground ring for orientation
+        ctx.strokeStyle = 'rgba(164,139,255,.12)';
+        ctx.lineWidth = 1;
+        for (const rad of [0.6, 1.1]) {
+          ctx.beginPath();
+          for (let a = 0; a <= 64; a++) {
+            const q2 = project([Math.cos((a / 64) * Math.PI * 2) * rad, 0.95, Math.sin((a / 64) * Math.PI * 2) * rad], w, h);
+            a ? ctx.lineTo(q2.x, q2.y) : ctx.moveTo(q2.x, q2.y);
+          }
+          ctx.stroke();
+        }
+        for (const it of items) {
+          for (let k = 0; k < 3; k++) it.p[k] = lerp(it.p[k], it.t[k], 0.05);
+          if (!vecs && !REDUCED) {
+            it.t[0] += Math.sin(time / 1700 + it.ph) * 0.0006;
+            it.t[1] += Math.cos(time / 1900 + it.ph) * 0.0006;
+          }
+        }
+        screen = items.map((it, i) => ({ i, ...project(it.p, w, h) }));
+        const order = [...screen].sort((a, b) => b.d - a.d);
+        const lines = (from, hits, t0) => {
+          hits.forEach((hit, k) => {
+            const to = screen[hit.i];
+            const prog = Math.min(1, (time - t0) / 500);
+            ctx.globalAlpha = Math.max(0, Math.min(1, (time - t0) / 300 - k * 0.12));
+            const g = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+            g.addColorStop(0, 'rgba(255,255,255,.95)');
             g.addColorStop(1, GCOL[items[hit.i].g]);
             ctx.strokeStyle = g;
-            ctx.globalAlpha = Math.min(1, (time - query.t) / 400 - k * 0.15);
-            ctx.lineWidth = 2.2 - k * 0.3;
+            ctx.lineWidth = Math.max(0.6, 2.4 - k * 0.35);
             ctx.beginPath();
-            ctx.moveTo(qx, qy);
-            ctx.lineTo(qx + (x - qx) * Math.min(1, (time - query.t) / 500), qy + (y - qy) * Math.min(1, (time - query.t) / 500));
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(lerp(from.x, to.x, prog), lerp(from.y, to.y, prog));
             ctx.stroke();
           });
           ctx.globalAlpha = 1;
-          const pulse = 8 + Math.sin(time / 200) * 3;
-          const g = ctx.createRadialGradient(qx, qy, 0, qx, qy, pulse * 3);
-          g.addColorStop(0, '#fff');
-          g.addColorStop(0.3, 'rgba(255,255,255,.5)');
+        };
+        let qs = null;
+        if (query) {
+          qs = project(query.p, w, h);
+          lines(qs, query.hits, query.t);
+        }
+        if (selected) lines(screen[selected.i], selected.hits, selected.t);
+        const hot = new Set([...(query?.hits ?? []), ...(selected?.hits ?? [])].map((x) => x.i));
+        for (const s of order) {
+          const it = items[s.i];
+          const dim = focus && it.g !== focus ? 0.18 : 1;
+          const isHot = hot.has(s.i) || s.i === hover || s.i === selected?.i;
+          const rad = (isHot ? 6.5 : 4.2) * s.k;
+          const c = GCOL[it.g];
+          ctx.globalAlpha = dim * Math.min(1, 0.35 + s.k * 0.7);
+          const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, rad * 3.2);
+          g.addColorStop(0, c);
+          g.addColorStop(0.35, `${c}66`);
           g.addColorStop(1, 'transparent');
           ctx.fillStyle = g;
           ctx.beginPath();
-          ctx.arc(qx, qy, pulse * 3, 0, 7);
+          ctx.arc(s.x, s.y, rad * 3.2, 0, 7);
           ctx.fill();
-        }
-        for (const it of items) {
-          const [x, y] = P(it);
-          const hit = query?.hits.some((hh) => items[hh.i] === it);
-          const rad = it === hover ? 7 : hit ? 6 : 4;
-          ctx.fillStyle = GCOL[it.g];
-          ctx.shadowColor = GCOL[it.g];
-          ctx.shadowBlur = hit || it === hover ? 18 : 8;
+          ctx.fillStyle = isHot ? '#fff' : c;
           ctx.beginPath();
-          ctx.arc(x, y, rad, 0, 7);
+          ctx.arc(s.x, s.y, rad * 0.55, 0, 7);
           ctx.fill();
         }
-        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+        if (qs) {
+          const pulse = 9 + Math.sin(time / 220) * 3;
+          const g = ctx.createRadialGradient(qs.x, qs.y, 0, qs.x, qs.y, pulse * 3 * qs.k);
+          g.addColorStop(0, '#fff');
+          g.addColorStop(0.25, 'rgba(255,255,255,.6)');
+          g.addColorStop(1, 'transparent');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(qs.x, qs.y, pulse * 3 * qs.k, 0, 7);
+          ctx.fill();
+          pill(ctx, `🔍 ${r.q.value}`, qs.x, qs.y - 14, '#fff', true);
+        }
+        // topic names float at each cluster's centre once the layout is real
+        if (vecs && r.labels.checked) {
+          for (const g of Object.keys(GCOL)) {
+            const mem = items.map((it, i) => [it, i]).filter(([it]) => it.g === g);
+            if (!mem.length) continue;
+            const c = [0, 1, 2].map((k) => mem.reduce((a, [it]) => a + it.p[k], 0) / mem.length);
+            const sp = project([c[0], c[1] - 0.22, c[2]], w, h);
+            ctx.globalAlpha = focus && focus !== g ? 0.25 : 0.9;
+            ctx.font = `700 ${Math.round(13 * sp.k + 3)}px "Schibsted Grotesk", sans-serif`;
+            ctx.fillStyle = GCOL[g];
+            ctx.textAlign = 'center';
+            ctx.fillText(g === 'Yours' ? 'YOURS' : g.toUpperCase(), sp.x, sp.y);
+          }
+          ctx.globalAlpha = 1;
+        }
+        const labelled = new Set([hover, selected?.i, ...(selected ? [] : (query?.hits ?? []).slice(0, 1).map((x) => x.i)), ...(selected?.hits ?? []).slice(0, 2).map((x) => x.i)].filter((x) => x !== null && x !== undefined));
+        for (const i of labelled) pill(ctx, items[i].text, screen[i].x, screen[i].y - 6, GCOL[items[i].g], i === hover || i === selected?.i);
       };
       raf = requestAnimationFrame(draw);
-      r.cv.addEventListener('pointermove', (e) => {
+
+      /* ---------- interaction ---------- */
+      let drag = null;
+      const pick = (e) => {
         const b = r.cv.getBoundingClientRect();
         const mx = e.clientX - b.left;
         const my = e.clientY - b.top;
-        hover = null;
-        let best = 14;
-        for (const it of items) {
-          const d = Math.hypot(30 + it.x * (b.width - 60) - mx, 30 + it.y * (b.height - 60) - my);
-          if (d < best) ((best = d), (hover = it));
+        let best = null;
+        let bd = 16;
+        for (const s of screen) {
+          const d = Math.hypot(s.x - mx, s.y - my);
+          if (d < bd) ((bd = d), (best = s.i));
         }
-        r.tip.style.opacity = hover ? 1 : 0;
-        if (hover) {
-          r.tip.textContent = hover.text;
-          r.tip.style.left = `${mx}px`;
-          r.tip.style.top = `${my}px`;
-        }
+        return best;
+      };
+      r.cv.addEventListener('pointerdown', (e) => {
+        drag = { x: e.clientX, y: e.clientY, moved: 0 };
+        r.cv.setPointerCapture(e.pointerId);
+        lastInteract = performance.now();
       });
+      r.cv.addEventListener('pointermove', (e) => {
+        if (drag) {
+          const dx = e.clientX - drag.x;
+          const dy = e.clientY - drag.y;
+          drag.moved += Math.abs(dx) + Math.abs(dy);
+          cam.vy = dx * 0.004;
+          cam.vp = dy * 0.004;
+          drag.x = e.clientX;
+          drag.y = e.clientY;
+          lastInteract = performance.now();
+          r.tip.style.opacity = 0;
+          return;
+        }
+        hover = pick(e);
+        r.cv.style.cursor = hover !== null ? 'pointer' : 'grab';
+      });
+      r.cv.addEventListener('pointerleave', () => (hover = null));
+      r.cv.addEventListener('pointerup', (e) => {
+        const click = drag && drag.moved < 5;
+        drag = null;
+        if (!click) return;
+        const i = pick(e);
+        if (i === null) return void (selected = null);
+        if (!vecs) return void (r.st.textContent = 'Embed the sentences first, then click a star to see its neighbours.');
+        const hits = vecs.map((v, j) => ({ i: j, s: cosineLocal(vecs[i], v) })).filter((x) => x.i !== i).sort((a, b) => b.s - a.s).slice(0, 5);
+        selected = { i, hits, t: performance.now() };
+        listHits(`closest to “${short(items[i].text, 40)}”`, hits);
+      });
+      r.cv.addEventListener('dblclick', () => Object.assign(cam, { yaw: 0.6, pitch: 0.35, dist: 2.7 }));
+      r.cv.addEventListener(
+        'wheel',
+        (e) => {
+          e.preventDefault();
+          cam.dist = Math.max(1.6, Math.min(7, cam.dist * (1 + Math.sign(e.deltaY) * 0.08)));
+          lastInteract = performance.now();
+        },
+        { passive: false },
+      );
+      r.legend.addEventListener('click', (e) => {
+        const b = e.target.closest('.ltype');
+        if (!b) return;
+        focus = focus === b.dataset.g ? null : b.dataset.g;
+        $$('.ltype', r.legend).forEach((x) => x.classList.toggle('off', !!focus && x.dataset.g !== focus));
+      });
+      const cosineLocal = (a, b) => {
+        let d = 0;
+        let na = 0;
+        let nb = 0;
+        for (let k = 0; k < a.length; k++) ((d += a[k] * b[k]), (na += a[k] * a[k]), (nb += b[k] * b[k]));
+        return d / Math.sqrt(na * nb || 1);
+      };
+      const listHits = (title, hits, ms) => {
+        r.hits.innerHTML = `<span class="ms">${esc(title)}${ms !== undefined ? ` · ${ms} ms` : ''}</span>${hits.map((h, k) => `<div class="hit" style="animation-delay:${k * 60}ms"><i style="background:${GCOL[items[h.i].g]}"></i><span>${esc(items[h.i].text)}</span><b>${h.s.toFixed(2)}</b></div>`).join('')}`;
+      };
       const place = () => {
         const pts = proj.points;
-        const xs = pts.map((p) => p[0]);
-        const ys = pts.map((p) => p[1]);
-        const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-        const nx = (v) => (v - x0) / (x1 - x0 || 1);
-        const ny = (v) => (v - y0) / (y1 - y0 || 1);
-        items.forEach((it, i) => ((it.tx = nx(pts[i][0])), (it.ty = ny(pts[i][1]))));
-        proj.norm = (p) => [Math.max(0, Math.min(1, nx(p[0]))), Math.max(0, Math.min(1, ny(p[1])))];
+        // Centre the cloud and scale each axis by its spread, so it fills the view from every angle.
+        const mean = [0, 1, 2].map((k) => pts.reduce((a, p) => a + p[k], 0) / pts.length);
+        const spread = [0, 1, 2].map((k) => Math.max(...pts.map((p) => Math.abs(p[k] - mean[k]))) || 1);
+        proj.norm = (p) => p.map((v, k) => Math.max(-1.3, Math.min(1.3, ((v - mean[k]) / spread[k]) * 0.95)));
+        items.forEach((it, i) => (it.t = proj.norm(pts[i])));
       };
       const search = async () => {
-        if (!vecs || !r.q.value.trim()) return;
+        if (!r.q.value.trim()) return;
+        if (!vecs) return void (r.st.textContent = 'Embed the sentences first.');
         const ew = await lib;
         const t0 = performance.now();
         const { embedding } = await ew.embed({ model: pk.value, input: r.q.value, purpose: 'query' });
-        const scores = vecs.map((v, i) => ({ i, s: ew.helpers.cosine(embedding, v) })).sort((a, b) => b.s - a.s).slice(0, 5);
-        const [x, y] = proj.norm(proj.project(Array.from(embedding)));
-        query = { x, y, hits: scores, t: performance.now() };
-        r.hits.innerHTML = `<span class="ms">nearest by meaning · ${Math.round(performance.now() - t0)} ms</span>${scores.map((h, k) => `<div class="hit" style="animation-delay:${k * 60}ms"><i style="background:${GCOL[items[h.i].g]}"></i><span>${esc(items[h.i].text)}</span><b>${h.s.toFixed(2)}</b></div>`).join('')}`;
+        const hits = vecs.map((v, i) => ({ i, s: ew.helpers.cosine(embedding, v) })).sort((a, b) => b.s - a.s).slice(0, 5);
+        query = { p: proj.norm(proj.project(Array.from(embedding))), hits, t: performance.now() };
+        selected = null;
+        listHits('nearest by meaning', hits, Math.round(performance.now() - t0));
+        code.refresh();
       };
-      r.q.addEventListener('keydown', (e) => e.key === 'Enter' && search().catch((err) => (r.st.textContent = err.message)));
+      r.qform.addEventListener('submit', (e) => (e.preventDefault(), search().catch((err) => (r.st.textContent = err.message))));
+      r.qs.addEventListener('click', (e) => e.target.closest('.chip') && ((r.q.value = e.target.textContent), search().catch((err) => (r.st.textContent = err.message))));
       r.run.addEventListener('click', () =>
         runBtn(r.run, r.st, async () => {
           const ew = await lib;
           const tr = tracker(pk.value);
           const mine = r.mine.value.split('\n').map((s) => s.trim()).filter(Boolean);
           items = items.filter((it) => it.g !== 'Yours');
-          for (const text of mine) items.push({ text, g: 'Yours', x: 0.5, y: 0.5, tx: 0.5, ty: 0.5, ph: 0 });
+          for (const text of mine) items.push(mk(text, 'Yours'));
           try {
             const res = await ew.embed({ model: pk.value, values: items.map((it) => it.text), purpose: 'document', onProgress: tr.onProgress });
             vecs = res.embeddings;
-            proj = pca2(vecs.map((v) => Array.from(v)));
+            proj = pcaK(vecs.map((v) => Array.from(v)), 3);
             place();
             query = null;
-            await sleep(700);
+            selected = null;
+            await sleep(900);
             await search();
             r.run.firstChild.textContent = 'Re-embed ';
             return res.info;
@@ -2262,72 +2937,206 @@ const SERIES = {
 CASES.forecast = [
   {
     id: 'draw',
-    title: 'Draw the past',
-    sub: 'forecast · anomalies',
+    title: 'Forecast lab',
+    sub: 'every parameter',
     render(panel, slot) {
+      // Synthetic series come from one generator; each preset is a set of its parameters.
+      const PRESETS = {
+        traffic: { label: 'Daily web traffic', shape: 'seasonal', length: 168, period: 24, amp: 22, trend: 0.08, noise: 8, base: 48, glitches: 0 },
+        sales: { label: 'Weekly sales', shape: 'weekly', length: 140, period: 7, amp: 16, trend: 0.25, noise: 5, base: 30, glitches: 0 },
+        walk: { label: 'Random walk', shape: 'walk', length: 160, period: 24, amp: 0, trend: 0.05, noise: 4, base: 100, glitches: 0 },
+        sensor: { label: 'Sensor with glitches', shape: 'seasonal', length: 144, period: 24, amp: 3, trend: 0, noise: 0.8, base: 20, glitches: 4 },
+      };
+      const gen = (p, seed) => {
+        const rnd = seeded(seed);
+        let v = p.base;
+        const out = Array.from({ length: p.length }, (_, t) => {
+          const e = (rnd() - 0.5) * p.noise;
+          if (p.shape === 'walk') return (v += (rnd() - 0.5 + p.trend * 0.1) * p.noise);
+          const season = p.shape === 'weekly' ? (t % p.period >= p.period - 2 ? p.amp : 0) : p.amp * Math.sin((t / p.period) * 2 * Math.PI);
+          return p.base + season + t * p.trend + e;
+        });
+        // Glitches: spikes and dips at random places after the first period.
+        for (let k = 0; k < p.glitches; k++) {
+          const i = Math.floor(p.period + rnd() * (p.length - p.period - 1));
+          out[i] += (rnd() < 0.7 ? 1 : -1) * (3 * p.noise + p.amp * 1.5 + 4);
+        }
+        return out;
+      };
       const r = layout(
         panel,
-        `${header('Zero-shot forecasting', "Chronos-Bolt never saw these series and needs no training. Pick a pattern or <b>draw your own</b> on the chart, then forecast it with an uncertainty band. Or ask it which points look wrong.")}
-        <div class="field"><label>Series</label><div class="chips" data-r="ser"><button class="chip on" data-k="traffic">Daily web traffic</button><button class="chip" data-k="sales">Weekly sales</button><button class="chip" data-k="walk">Random walk</button><button class="chip" data-k="sensor">Sensor with glitches</button><button class="chip" data-k="draw">✏️ Draw your own</button></div></div>
-        <div class="field"><label>Horizon</label><div class="range"><input type="range" data-r="hz" min="8" max="64" step="4" value="36"><output data-r="hzv">36 steps</output></div></div>
+        `${header('Zero-shot forecasting, fully exposed', 'Chronos-Bolt needs no training. Shape the history, choose the horizon, context and quantiles, hold out the end to score it, and tune anomaly detection. Or draw or paste your own series.')}
+        <div class="field"><label>Data</label><div class="chips" data-r="ser">${Object.entries(PRESETS).map(([k, v], i) => `<button class="chip${i ? '' : ' on'}" data-k="${k}">${v.label}</button>`).join('')}<button class="chip" data-k="draw">✏️ Draw</button><button class="chip" data-k="paste">📋 Paste</button></div></div>
+        <div class="gen" data-r="gen">
+          <div class="field"><label>Length</label><div class="range"><input type="range" data-g="length" min="48" max="512" step="8"><output></output></div></div>
+          <div class="field"><label>Season period</label><div class="range"><input type="range" data-g="period" min="3" max="96" step="1"><output></output></div></div>
+          <div class="field"><label>Season strength</label><div class="range"><input type="range" data-g="amp" min="0" max="40" step="0.5"><output></output></div></div>
+          <div class="field"><label>Trend per step</label><div class="range"><input type="range" data-g="trend" min="-0.5" max="0.5" step="0.01"><output></output></div></div>
+          <div class="field"><label>Noise</label><div class="range"><input type="range" data-g="noise" min="0" max="20" step="0.2"><output></output></div></div>
+          <div class="field"><label>Glitches</label><div class="range"><input type="range" data-g="glitches" min="0" max="12" step="1"><output></output></div></div>
+          <div class="row"><span class="lbl">seed</span><input type="text" data-r="seed" value="7" style="max-width:90px"><button class="chip" type="button" data-r="dice">🎲</button></div>
+        </div>
+        <div class="field" data-r="pastef" hidden><label>Your numbers, oldest first (commas, spaces or new lines)</label><textarea data-r="paste" rows="3" placeholder="12, 15, 14, 18, 21, 19, 25, …"></textarea></div>
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
+        <details class="adv" open><summary>Forecast</summary>
+          <div class="field"><label>Horizon (steps ahead; over 64 repeats on its own median)</label><div class="range"><input type="range" data-r="hz" min="1" max="128" step="1" value="36"><output data-r="hzv"></output></div></div>
+          <div class="field"><label>Context: most recent values the model sees</label><div class="range"><input type="range" data-r="ctx" min="16" max="512" step="8" value="512"><output data-r="ctxv"></output></div></div>
+          <div class="field"><label>Quantiles</label><div class="chips" data-r="qs">${[0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9].map((v) => `<button class="chip${[0.1, 0.3, 0.7, 0.9].includes(v) ? ' on' : ''}" data-q="${v}">${v}</button>`).join('')}</div><span class="hint2">pairs become bands: 0.1–0.9 is the 80% range. The median (0.5) is always included.</span></div>
+          <div class="row"><span class="lbl">center line</span><div class="chips" data-r="center"><button class="chip on" data-c="median">median</button><button class="chip" data-c="mean">mean</button></div></div>
+          <label class="check"><input type="checkbox" data-r="hold"> <span>Backtest: hide the last <b data-r="holdn">36</b> values, forecast them, and score the result</span></label>
+        </details>
+        <details class="adv"><summary>Anomaly detection</summary>
+          <div class="field"><label>Expected range (quantiles)</label><div class="row"><select data-r="alo">${[0.1, 0.2, 0.3].map((v) => `<option${v === 0.1 ? ' selected' : ''}>${v}</option>`).join('')}</select><span class="hint2">to</span><select data-r="ahi">${[0.7, 0.8, 0.9].map((v) => `<option${v === 0.9 ? ' selected' : ''}>${v}</option>`).join('')}</select></div></div>
+          <div class="field"><label>Tolerance (extra margin, × range width)</label><div class="range"><input type="range" data-r="tol" min="0" max="2" step="0.05" value="0.5"><output data-r="tolv"></output></div></div>
+          <div class="field"><label>Warm-up (values before the first check)</label><div class="range"><input type="range" data-r="warm" min="8" max="128" step="4" value="32"><output data-r="warmv"></output></div></div>
+          <div class="field"><label>Window (history per check)</label><div class="range"><input type="range" data-r="win" min="16" max="512" step="16" value="512"><output data-r="winv"></output></div></div>
+        </details>
         <div class="row"><button class="run" data-r="run">Forecast <small data-r="sz"></small></button><button class="run secondary" data-r="anom">Find anomalies</button></div>
         <div class="status" data-r="st"></div>`,
         `<div class="chart" data-r="chart"><canvas data-r="cv"></canvas><span class="hint" data-r="hint">drag on the chart to redraw the history</span></div>
-        <div class="meters"><div class="meter"><span>next value</span><b data-r="next">–</b></div><div class="meter"><span>80% range</span><b data-r="rng">–</b></div><div class="meter"><span>anomalies</span><b data-r="na">–</b></div></div>`,
+        <div class="meters"><div class="meter"><span>next value</span><b data-r="next">–</b></div><div class="meter"><span>outer band, step 1</span><b data-r="rng">–</b></div><div class="meter"><span data-r="m3l">backtest MAE</span><b data-r="mae">–</b></div><div class="meter"><span>inside outer band</span><b data-r="cov">–</b></div><div class="meter"><span>anomalies</span><b data-r="na">–</b></div></div>`,
       );
       const pk = picker(ids((m) => m.verb === 'forecast'), 'chronos-bolt-tiny', () => (sz(), code.refresh()));
       r.pick.append(pk.el);
       const sz = () => (r.sz.textContent = sizeLabel(pk.value));
       sz();
-      let hist = SERIES.traffic();
+      let params = { ...PRESETS.traffic };
+      let mode = 'gen';
+      let series = gen(params, 7);
       let fc = null;
       let anomalies = [];
       let fcT = 0;
-      r.hz.addEventListener('input', () => ((r.hzv.textContent = `${r.hz.value} steps`), code.refresh()));
+      const quantiles = () => $$('.chip.on', r.qs).map((c) => +c.dataset.q);
+      const center = () => $('.chip.on', r.center).dataset.c;
+      const holdN = () => (r.hold.checked ? Math.min(+r.hz.value, Math.max(0, series.length - 16)) : 0);
+      const history = () => series.slice(0, series.length - holdN());
+      const syncGen = () => {
+        for (const el of $$('[data-g]', r.gen)) {
+          el.value = params[el.dataset.g];
+          el.nextElementSibling.textContent = params[el.dataset.g];
+        }
+      };
+      const regen = () => {
+        series = gen(params, +r.seed.value || 0);
+        reset();
+      };
+      const reset = () => {
+        fc = null;
+        anomalies = [];
+        for (const k of ['next', 'rng', 'mae', 'cov', 'na']) r[k].textContent = '–';
+        labels();
+        code.refresh();
+      };
+      const labels = () => {
+        r.hzv.textContent = `${r.hz.value} steps`;
+        r.holdn.textContent = r.hz.value;
+        const ctxMax = Math.max(16, history().length);
+        r.ctx.max = String(Math.max(16, Math.ceil(ctxMax / 8) * 8));
+        r.ctxv.textContent = +r.ctx.value >= ctxMax ? `all ${ctxMax}` : `last ${r.ctx.value}`;
+        r.tolv.textContent = (+r.tol.value).toFixed(2);
+        r.warmv.textContent = r.warm.value;
+        r.winv.textContent = r.win.value;
+      };
+      syncGen();
+      labels();
+      r.gen.addEventListener('input', (e) => {
+        const k = e.target.dataset.g;
+        if (!k) return;
+        params[k] = +e.target.value;
+        e.target.nextElementSibling.textContent = e.target.value;
+        regen();
+      });
+      r.seed.addEventListener('input', regen);
+      r.dice.addEventListener('click', () => ((r.seed.value = String((Math.random() * 1e5) | 0)), regen()));
       r.ser.addEventListener('click', (e) => {
         const k = e.target.dataset.k;
         if (!k) return;
         $$('.chip', r.ser).forEach((c) => c.classList.toggle('on', c.dataset.k === k));
-        hist = k === 'draw' ? new Array(144).fill(null).map((_, i) => 50 + Math.sin(i / 10) * 0.01) : SERIES[k]();
-        if (k === 'draw') r.hint.textContent = 'drag across the chart to draw a history, then press Forecast';
-        fc = null;
-        anomalies = [];
-        r.na.textContent = '–';
+        mode = PRESETS[k] ? 'gen' : k;
+        r.gen.hidden = mode !== 'gen';
+        r.pastef.hidden = mode !== 'paste';
+        if (PRESETS[k]) {
+          params = { ...PRESETS[k] };
+          syncGen();
+          regen();
+        } else if (k === 'draw') {
+          series = new Array(144).fill(50);
+          r.hint.textContent = 'drag across the chart to draw a history, then press Forecast';
+          reset();
+        } else r.paste.focus();
       });
-      const code = codeDrawer(
-        () => `import { forecast } from 'edgewise';
+      r.paste.addEventListener('input', () => {
+        const nums = r.paste.value.split(/[\s,;]+/).map(Number).filter((v) => Number.isFinite(v));
+        if (nums.length >= 8) ((series = nums), reset(), (r.st.textContent = `${nums.length} values`));
+        else r.st.textContent = 'paste at least 8 numbers';
+      });
+      for (const el of [r.hz, r.ctx, r.tol, r.warm, r.win]) el.addEventListener('input', () => (labels(), code.refresh()));
+      r.hz.addEventListener('input', () => r.hold.checked && reset());
+      r.hold.addEventListener('change', reset);
+      r.qs.addEventListener('click', (e) => {
+        const b = e.target.closest('.chip');
+        if (!b) return;
+        b.classList.toggle('on');
+        if (!quantiles().length) b.classList.add('on');
+        code.refresh();
+      });
+      r.center.addEventListener('click', (e) => {
+        const b = e.target.closest('.chip');
+        if (!b) return;
+        $$('.chip', r.center).forEach((c) => c.classList.toggle('on', c === b));
+        code.refresh();
+      });
+      for (const el of [r.alo, r.ahi]) el.addEventListener('change', () => code.refresh());
+      const ctxOpt = () => (+r.ctx.value >= history().length ? null : +r.ctx.value);
+      const code = codeDrawer(() => {
+        const qsv = [...new Set([...quantiles(), 0.5])].sort();
+        return `import { forecast } from 'edgewise';
 import { detectAnomalies } from 'edgewise/helpers';
 
-const f = await forecast({ model: ${q(pk.value)}, series: history, horizon: ${r.hz.value}, quantiles: [0.1, 0.3, 0.7, 0.9] });
-f.median;           // Float32Array(${r.hz.value})
-f.quantiles[0.1];   // lower edge of the 80% band
+const f = await forecast({
+  model: ${q(pk.value)},
+  series: history,              // ${history().length} values, oldest first
+  horizon: ${r.hz.value},${ctxOpt() ? `\n  context: ${ctxOpt()},` : ''}
+  quantiles: [${qsv.join(', ')}],
+});
+f.${center()};  // Float32Array(${r.hz.value})
+f.quantiles[${Math.min(...qsv)}]; // lower edge of the outer band
 
-const odd = await detectAnomalies(history, { model: ${q(pk.value)}, warmup: 32 }); // [{ index, value, expected, direction }]`,
-      );
+const odd = await detectAnomalies(history, {
+  model: ${q(pk.value)},
+  range: [${r.alo.value}, ${r.ahi.value}],
+  tolerance: ${(+r.tol.value).toFixed(2)},
+  warmup: ${r.warm.value},
+  window: ${r.win.value},
+}); // [{ index, value, expected: [lo, hi], direction }]`;
+      });
       slot.append(code);
-      // Geometry shared by drawing and pointer input.
+
+      /* ---------- chart ---------- */
       let geo = null;
       let raf;
       const draw = (t) => {
         raf = requestAnimationFrame(draw);
         const { ctx, w, h } = canvasFit(r.cv);
         ctx.clearRect(0, 0, w, h);
-        const F = fc ? fc.median.length : +r.hz.value;
+        const hist = history();
         const H = hist.length;
-        const vals = [...hist, ...(fc ? [...fc.q[0.1], ...fc.q[0.9]] : [])];
+        const held = series.slice(H);
+        const F = Math.max(fc ? fc.center.length : +r.hz.value, held.length);
+        const qk = fc ? Object.keys(fc.q).map(Number).sort((a, b) => a - b) : [];
+        const vals = [...series, ...(fc ? qk.flatMap((k) => fc.q[k]) : [])].filter(Number.isFinite);
         let lo = Math.min(...vals);
         let hi = Math.max(...vals);
         const pad = (hi - lo) * 0.12 || 1;
         lo -= pad;
         hi += pad;
-        const L = 44;
+        const L = 48;
         const R = 14;
         const T = 34;
         const B = 26;
-        const x = (i) => L + (i / (H + F - 1)) * (w - L - R);
+        const x = (i) => L + (i / Math.max(1, H + F - 1)) * (w - L - R);
         const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (h - T - B);
-        geo = { x, y, L, R, T, B, H, F, lo, hi, w, h };
+        geo = { x, L, R, T, B, H, F, lo, hi, w, h };
         ctx.font = '11px "JetBrains Mono", monospace';
         for (let k = 0; k <= 4; k++) {
           const v = lo + ((hi - lo) * k) / 4;
@@ -2338,7 +3147,16 @@ const odd = await detectAnomalies(history, { model: ${q(pk.value)}, warmup: 32 }
           ctx.stroke();
           ctx.fillStyle = '#4A5763';
           ctx.textAlign = 'right';
-          ctx.fillText(v.toFixed(0), L - 8, y(v) + 4);
+          ctx.fillText(Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1), L - 8, y(v) + 4);
+        }
+        // Values outside the context window are dimmed: the model never sees them.
+        const cstart = ctxOpt() ? H - ctxOpt() : 0;
+        if (cstart > 0) {
+          ctx.fillStyle = 'rgba(0,0,0,.35)';
+          ctx.fillRect(L, T - 10, x(cstart) - L, h - B - T + 10);
+          ctx.fillStyle = '#4A5763';
+          ctx.textAlign = 'left';
+          ctx.fillText('outside context', L + 6, T + 4);
         }
         ctx.setLineDash([3, 5]);
         ctx.strokeStyle = 'rgba(255,255,255,.18)';
@@ -2349,59 +3167,70 @@ const odd = await detectAnomalies(history, { model: ${q(pk.value)}, warmup: 32 }
         ctx.setLineDash([]);
         ctx.fillStyle = '#7A8994';
         ctx.textAlign = 'center';
-        ctx.fillText('now', x(H - 0.5), T - 16);
-        // history
+        ctx.fillText(held.length ? 'hidden from the model →' : 'now', x(H - 0.5) + (held.length ? 70 : 0), T - 16);
         ctx.strokeStyle = '#B7C3CB';
         ctx.lineWidth = 1.8;
         ctx.beginPath();
         hist.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
         ctx.stroke();
+        if (held.length) {
+          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = 'rgba(183,195,203,.6)';
+          ctx.beginPath();
+          ctx.moveTo(x(H - 1), y(hist[H - 1]));
+          held.forEach((v, i) => ctx.lineTo(x(H + i), y(v)));
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
         if (fc) {
-          const prog = REDUCED ? 1 : Math.min(1, (t - fcT) / 1100);
-          const n = Math.max(1, Math.round(F * prog));
-          const band = (a, b, alpha) => {
-            ctx.fillStyle = `rgba(94,184,255,${alpha})`;
+          const n = Math.max(1, Math.round(fc.center.length * (REDUCED ? 1 : Math.min(1, (t - fcT) / 1100))));
+          // Bands from the outermost quantile pair inwards.
+          const pairs = [];
+          for (let a = 0, b = qk.length - 1; a < b; a++, b--) if (qk[a] < 0.5 && qk[b] > 0.5) pairs.push([qk[a], qk[b]]);
+          pairs.forEach(([a, b], k) => {
+            ctx.fillStyle = `rgba(94,184,255,${0.1 + k * 0.08})`;
             ctx.beginPath();
             ctx.moveTo(x(H - 1), y(hist[H - 1]));
             for (let i = 0; i < n; i++) ctx.lineTo(x(H + i), y(fc.q[b][i]));
             for (let i = n - 1; i >= 0; i--) ctx.lineTo(x(H + i), y(fc.q[a][i]));
             ctx.closePath();
             ctx.fill();
-          };
-          band(0.1, 0.9, 0.14);
-          band(0.3, 0.7, 0.22);
+          });
           ctx.strokeStyle = '#5EB8FF';
           ctx.lineWidth = 2.4;
           ctx.shadowColor = '#5EB8FF';
           ctx.shadowBlur = 12;
           ctx.beginPath();
           ctx.moveTo(x(H - 1), y(hist[H - 1]));
-          for (let i = 0; i < n; i++) ctx.lineTo(x(H + i), y(fc.median[i]));
+          for (let i = 0; i < n; i++) ctx.lineTo(x(H + i), y(fc.center[i]));
           ctx.stroke();
           ctx.shadowBlur = 0;
-          const i = n - 1;
           ctx.fillStyle = '#fff';
           ctx.beginPath();
-          ctx.arc(x(H + i), y(fc.median[i]), 3.5, 0, 7);
+          ctx.arc(x(H + n - 1), y(fc.center[n - 1]), 3.5, 0, 7);
           ctx.fill();
         }
         for (const a of anomalies) {
           const px = x(a.index);
-          const py = y(a.value);
-          const pr = 6 + ((t / 90 + a.index) % 12);
-          ctx.strokeStyle = `rgba(255,107,107,${1 - ((t / 90 + a.index) % 12) / 12})`;
+          const ph = (t / 90 + a.index) % 12;
+          ctx.strokeStyle = 'rgba(255,107,107,.35)';
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(px, py, pr, 0, 7);
+          ctx.moveTo(px, y(a.expected[0]));
+          ctx.lineTo(px, y(a.expected[1]));
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(255,107,107,${1 - ph / 12})`;
+          ctx.beginPath();
+          ctx.arc(px, y(a.value), 6 + ph, 0, 7);
           ctx.stroke();
           ctx.fillStyle = '#FF6B6B';
           ctx.beginPath();
-          ctx.arc(px, py, 4, 0, 7);
+          ctx.arc(px, y(a.value), 4, 0, 7);
           ctx.fill();
         }
       };
       raf = requestAnimationFrame(draw);
-      // Drawing: drag across the history area to rewrite values.
+      // Drawing: drag across the history to rewrite it (switches to "Draw").
       let drawing = false;
       let lastI = null;
       const pen = (e) => {
@@ -2413,28 +3242,48 @@ const odd = await detectAnomalies(history, { model: ${q(pk.value)}, warmup: 32 }
         if (i < 0 || i >= geo.H) return;
         const v = geo.lo + (1 - (py - geo.T) / (geo.h - geo.T - geo.B)) * (geo.hi - geo.lo);
         if (lastI !== null && lastI !== i) {
-          const [a, bI] = lastI < i ? [lastI, i] : [i, lastI];
-          const va = hist[a];
-          for (let k = a; k <= bI; k++) hist[k] = lastI < i ? va + ((v - va) * (k - a)) / (bI - a || 1) : v + ((hist[bI] - v) * (k - a)) / (bI - a || 1);
+          const [a, c] = lastI < i ? [lastI, i] : [i, lastI];
+          const va = series[lastI];
+          for (let k = a; k <= c; k++) series[k] = va + ((v - va) * (k - lastI)) / (i - lastI);
         }
-        hist[i] = v;
+        series[i] = v;
         lastI = i;
         fc = null;
         anomalies = [];
       };
       r.cv.addEventListener('pointerdown', (e) => ((drawing = true), (lastI = null), r.cv.setPointerCapture(e.pointerId), pen(e), (r.hint.textContent = 'release to keep your drawing')));
       r.cv.addEventListener('pointermove', (e) => drawing && pen(e));
-      r.cv.addEventListener('pointerup', () => ((drawing = false), (r.hint.textContent = 'press Forecast, or keep drawing')));
+      r.cv.addEventListener('pointerup', () => ((drawing = false), (r.hint.textContent = 'press Forecast, or keep drawing'), reset()));
       r.run.addEventListener('click', () =>
         runBtn(r.run, r.st, async () => {
           const ew = await lib;
           const tr = tracker(pk.value);
           try {
-            const res = await ew.forecast({ model: pk.value, series: hist, horizon: +r.hz.value, quantiles: [0.1, 0.3, 0.7, 0.9], onProgress: tr.onProgress });
-            fc = { median: Array.from(res.median), q: Object.fromEntries(Object.entries(res.quantiles).map(([k, v]) => [k, Array.from(v)])) };
+            const hist = history();
+            const qsv = [...new Set([...quantiles(), 0.5])].sort();
+            const res = await ew.forecast({ model: pk.value, series: hist, horizon: +r.hz.value, quantiles: qsv, ...(ctxOpt() ? { context: ctxOpt() } : {}), onProgress: tr.onProgress });
+            const qmap = Object.fromEntries(Object.entries(res.quantiles).map(([k, v]) => [k, Array.from(v)]));
+            fc = { center: Array.from(center() === 'mean' ? res.mean : res.median), q: qmap };
             fcT = performance.now();
-            r.next.textContent = fc.median[0].toFixed(1);
-            r.rng.textContent = `${fc.q[0.1][0].toFixed(1)}–${fc.q[0.9][0].toFixed(1)}`;
+            const qk = Object.keys(qmap).map(Number).sort((a, b) => a - b);
+            const [lo, hi] = [qk[0], qk.at(-1)];
+            r.next.textContent = fc.center[0].toFixed(2);
+            r.rng.textContent = lo < 0.5 && hi > 0.5 ? `${qmap[lo][0].toFixed(1)}–${qmap[hi][0].toFixed(1)}` : '–';
+            const held = series.slice(hist.length);
+            if (held.length) {
+              const n = Math.min(held.length, fc.center.length);
+              let err = 0;
+              let inside = 0;
+              for (let i = 0; i < n; i++) {
+                err += Math.abs(held[i] - fc.center[i]);
+                if (lo < 0.5 && hi > 0.5 && held[i] >= qmap[lo][i] && held[i] <= qmap[hi][i]) inside++;
+              }
+              r.mae.textContent = (err / n).toFixed(2);
+              r.cov.innerHTML = lo < 0.5 && hi > 0.5 ? `${Math.round((inside / n) * 100)}%<small> of ${Math.round((hi - lo) * 100)}%</small>` : '–';
+            } else {
+              r.mae.innerHTML = '<small>turn on backtest</small>';
+              r.cov.textContent = '–';
+            }
             return res.info;
           } finally {
             tr.done();
@@ -2446,7 +3295,7 @@ const odd = await detectAnomalies(history, { model: ${q(pk.value)}, warmup: 32 }
           const ew = await lib;
           const tr = tracker(pk.value);
           try {
-            anomalies = await ew.helpers.detectAnomalies(hist, { model: pk.value, warmup: 32, onProgress: tr.onProgress });
+            anomalies = await ew.helpers.detectAnomalies(history(), { model: pk.value, range: [+r.alo.value, +r.ahi.value], tolerance: +r.tol.value, warmup: +r.warm.value, window: +r.win.value, onProgress: tr.onProgress });
             r.na.textContent = anomalies.length;
             return null;
           } finally {
