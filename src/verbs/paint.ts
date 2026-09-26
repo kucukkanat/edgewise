@@ -42,6 +42,17 @@ export interface PaintStep {
   preview: { data: Uint8ClampedArray; width: number; height: number };
 }
 
+/** Wrap RGBA pixels as a GeneratedImage (used when results cross a worker boundary). */
+export function imageFromRgba(rgba: Uint8ClampedArray, width: number, height: number): GeneratedImage {
+  const rgb = new Uint8ClampedArray(width * height * 3);
+  for (let i = 0; i < width * height; i++) {
+    rgb[i * 3] = rgba[i * 4];
+    rgb[i * 3 + 1] = rgba[i * 4 + 1];
+    rgb[i * 3 + 2] = rgba[i * 4 + 2];
+  }
+  return makeImage(rgb, width, height);
+}
+
 function makeImage(rgb: Uint8ClampedArray, width: number, height: number): GeneratedImage {
   const rgba = new Uint8ClampedArray(width * height * 4);
   for (let i = 0; i < width * height; i++) {

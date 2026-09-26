@@ -27,5 +27,17 @@ export {
 } from './verbs/generate.ts';
 export { type GeneratedImage, type PaintOptions, type PaintResult, type PaintStep, paint } from './verbs/paint.ts';
 export type { SchemaLike } from './verbs/schema.ts';
-export { listVoices, type SpeakOptions, type SpeechAudio, type SpeechChunk, speak, type Voice, type VoiceSpec } from './verbs/speak.ts';
+export {
+  type ClonedVoice,
+  type CloneVoiceOptions,
+  cloneVoice,
+  listVoices,
+  type SpeakOptions,
+  type SpeechAudio,
+  type SpeechChunk,
+  speak,
+  type Voice,
+  type VoiceReference,
+  type VoiceSpec,
+} from './verbs/speak.ts';
 export { type Tool, tool } from './verbs/tools.ts';

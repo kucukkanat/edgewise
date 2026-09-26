@@ -1,3 +1,4 @@
+import { loadChatterbox } from '../backends/chatterbox.ts';
 import { loadChronos } from '../backends/chronos.ts';
 import { loadEmbedder } from '../backends/embedding.ts';
 import { fetchModelFile } from '../backends/files.ts';
@@ -41,6 +42,9 @@ async function warm(m: Manifest, o: CommonOptions): Promise<void> {
       return;
     case 'kokoro':
       await loadKokoro(m, o);
+      return;
+    case 'chatterbox':
+      await loadChatterbox(m, o);
       return;
     case 'sd-turbo':
       // Download only: the three graphs are compiled one at a time when painting, to save memory.

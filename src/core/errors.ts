@@ -153,7 +153,9 @@ export function toEdgewiseError(err: unknown, context: string): EdgewiseError {
       hint: 'There is not enough storage for this model. Delete cached models or call persist().',
     });
   }
-  if (/fetch failed|network|ECONNRESET|ETIMEDOUT|ENOTFOUND|Could not locate file|status: 40|status: 50/i.test(message)) {
+  if (
+    /fetch failed|failed to fetch|networkerror|network|load failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|Could not locate file|status: 40|status: 50/i.test(message)
+  ) {
     return new DownloadError(`${context}: ${message}`, {
       cause: err,
       hint: 'A model file could not be downloaded. Check the network connection and try again.',

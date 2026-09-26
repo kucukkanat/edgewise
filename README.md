@@ -24,7 +24,7 @@ const { answers } = await evaluate({
 // embed → vectors
 const { embedding } = await embed({ model: 'embed:default', input: 'How do I reset my password?' });
 
-// speak → audio (streams sentence by sentence)
+// speak → audio (streams sentence by sentence), or a cloned voice with consent
 const audio = await speak({ model: 'voice:default', input: 'Hello from your device.' });
 
 // paint → image (preview)
@@ -51,6 +51,7 @@ const { median, quantiles } = await forecast({ model: 'forecast:default', series
 | `edgewise/react` | hooks: `useModel`, `useChat`, `useEvaluate`, `useSpeak`, … |
 | `edgewise/ai-sdk` | Vercel AI SDK providers |
 | `edgewise/test` | mock models for unit tests |
+| `edgewise/worker` | run every verb in a Web Worker: `serveWorker()`, `connectWorker()` |
 
 Optional peers: `zod` (schemas, tools), `phonemizer` (Kokoro TTS; bundles GPL-3.0 espeak-ng), `react`, `ai` and `@ai-sdk/provider`.
 

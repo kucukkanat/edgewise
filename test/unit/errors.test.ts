@@ -38,6 +38,7 @@ describe('errors', () => {
     expect(toEdgewiseError(new Error('failed to allocate: out of memory'), 'x')).toBeInstanceOf(OutOfMemoryError);
     expect(toEdgewiseError(new Error('QuotaExceededError'), 'x')).toBeInstanceOf(StorageQuotaError);
     expect(toEdgewiseError(new Error('fetch failed'), 'x')).toBeInstanceOf(DownloadError);
+    expect(toEdgewiseError(new TypeError('Failed to fetch'), 'x')).toBeInstanceOf(DownloadError);
     const abort = new Error('The operation was aborted');
     abort.name = 'AbortError';
     expect(toEdgewiseError(abort, 'x')).toBeInstanceOf(AbortError);

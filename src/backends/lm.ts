@@ -118,6 +118,11 @@ async function templateMessages(
   return { msgs, images };
 }
 
+/** Sample frames from a video element or file (browser only). */
+export function sampleVideoFrames(video: HTMLVideoElement | Blob, frames = 8) {
+  return videoFrames({ type: 'video', video, frames });
+}
+
 async function videoFrames(p: Extract<Part, { type: 'video' }>): Promise<import('../core/parts.ts').ImageLike[]> {
   const n = Math.max(1, Math.min(32, p.frames ?? 8));
   if (Array.isArray(p.video)) {

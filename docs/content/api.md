@@ -17,6 +17,7 @@ The full reference, generated from the source with TypeDoc, is at **[API referen
 | `edgewise/react` | [React hooks](react) |
 | `edgewise/ai-sdk` | [Vercel AI SDK providers](aisdk) |
 | `edgewise/test` | [mock models](testing) |
+| `edgewise/worker` | [worker mode](worker): `serveWorker`, `connectWorker` |
 
 ## configure()
 

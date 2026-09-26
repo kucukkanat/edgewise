@@ -471,6 +471,23 @@ export const builtinManifests: Manifest[] = [
     config: { sampleRate: 24000 },
     description: 'High-quality English speech with 28 voices.',
   },
+  {
+    id: 'chatterbox-turbo',
+    version: '1.0.0',
+    verb: 'speak',
+    accepts: ['text', 'audio'],
+    task: 'chatterbox',
+    source: { repo: 'ResembleAI/chatterbox-turbo-ONNX', revision: 'd21799bd0354adb85e348b8a0442a8405110a2cf' },
+    // Every quantized export uses GatherBlockQuantized, which ONNX Runtime's WebAssembly build lacks,
+    // and fp32 is 3.3 GB, so browsers need WebGPU.
+    variants: [{ dtype: { embed_tokens: 'q4', speech_encoder: 'q4', model: 'q4', conditional_decoder: 'q4' }, devices: ['webgpu', 'cpu'], bytes: 717 * MB }],
+    params: '350M',
+    license: 'mit',
+    status: 'preview',
+    features: ['clone', 'stream'],
+    config: { sampleRate: 24000, minReferenceSeconds: 3, maxReferenceSeconds: 10 },
+    description: 'Zero-shot voice cloning from 3 to 10 seconds of reference audio. English. Needs WebGPU in browsers.',
+  },
   // ---------------------------------------------------------------- paint
   {
     id: 'sd-turbo',
@@ -564,6 +581,7 @@ export const builtinAliases: Record<string, string> = {
   'embed:default': 'embeddinggemma-300m',
   'embed:tiny': 'all-minilm-l6-v2',
   'voice:default': 'kokoro-82m',
+  'voice:clone': 'chatterbox-turbo',
   'image:default': 'sd-turbo',
   'vad:default': 'silero-vad',
   'forecast:default': 'chronos-bolt-tiny',

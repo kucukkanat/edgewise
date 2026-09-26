@@ -6,6 +6,13 @@ order: 40
 
 # Changelog
 
+## 0.2.0
+
+- Voice cloning: `speak({ voice: { reference, consent } })`, `cloneVoice()` and saved voices, with Chatterbox Turbo (`voice:clone`). Consent is required.
+- Worker mode: `edgewise/worker` runs every verb in a Web Worker with the same API, including streams, tools, schemas and microphone input.
+- Models Edgewise exports are all served from the `kucukkanat/edgewise-models` Hugging Face bucket.
+- Browser network failures are reported as `DownloadError`.
+
 ## 0.1.0
 
 The first release.

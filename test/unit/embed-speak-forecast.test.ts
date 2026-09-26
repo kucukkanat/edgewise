@@ -4,7 +4,7 @@ import { decodeWav } from '../../src/platform/audio.ts';
 import { mockModel } from '../../src/test/index.ts';
 import { embed } from '../../src/verbs/embed.ts';
 import { forecast, resamplePoints } from '../../src/verbs/forecast.ts';
-import { speak } from '../../src/verbs/speak.ts';
+import { cloneVoice, speak } from '../../src/verbs/speak.ts';
 
 describe('embed (mock)', () => {
   const model = mockModel({ verb: 'embed', respond: ({ texts }) => texts.map((t) => [t.length, 1, 0]) });
@@ -122,5 +122,37 @@ describe('PNG encoder', () => {
     const v = new DataView(png.buffer, png.byteOffset);
     expect(v.getUint32(16)).toBe(2);
     expect(new TextDecoder().decode(png.subarray(png.length - 8, png.length - 4))).toBe('IEND');
+  });
+});
+
+describe('voice cloning (no downloads)', () => {
+  it('needs consent and a reference', async () => {
+    const ref = new Float32Array(24000 * 4);
+    await expect(
+      Promise.resolve(speak({ model: 'chatterbox-turbo', allowPreview: true, input: 'Hi.', voice: { reference: ref, consent: {} as never } })),
+    ).rejects.toThrow(/consent/);
+    await expect(Promise.resolve(speak({ model: 'chatterbox-turbo', allowPreview: true, input: 'Hi.' }))).rejects.toThrow(/reference audio/);
+    await expect(Promise.resolve(speak({ model: 'chatterbox-turbo', allowPreview: true, input: 'Hi.', voice: 'saved:nobody-here' }))).rejects.toThrow(
+      /No saved voice/,
+    );
+    await expect(cloneVoice({ model: 'kokoro-82m', reference: ref, consent: { attested: true } })).rejects.toThrow(/does not accept audio/);
+    await expect(cloneVoice({ reference: ref, consent: { attested: false } as never })).rejects.toThrow(/consent/);
+  });
+
+  it('saves and restores a cloned voice byte for byte', async () => {
+    const { voiceFromBytes, voiceToBytes } = await import('../../src/backends/chatterbox.ts');
+    const v = {
+      kind: 'cloned-voice' as const,
+      model: 'chatterbox-turbo',
+      audio_features: { type: 'float32' as const, dims: [1, 2, 3], data: Float32Array.from([1, 2, 3, 4, 5, 6]) },
+      audio_tokens: { type: 'int64' as const, dims: [1, 3], data: BigInt64Array.from([7n, 8n, 9n]) },
+      speaker_embeddings: { type: 'float32' as const, dims: [1, 2], data: Float32Array.from([0.5, -0.5]) },
+      speaker_features: { type: 'float32' as const, dims: [1, 1, 1], data: Float32Array.from([42]) },
+    };
+    const back = voiceFromBytes(voiceToBytes(v));
+    expect(back.model).toBe('chatterbox-turbo');
+    expect(Array.from(back.audio_tokens.data as BigInt64Array)).toEqual([7n, 8n, 9n]);
+    expect(back.audio_features.dims).toEqual([1, 2, 3]);
+    expect(Array.from(back.speaker_features.data as Float32Array)).toEqual([42]);
   });
 });

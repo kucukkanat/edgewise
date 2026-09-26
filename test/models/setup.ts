@@ -11,13 +11,15 @@ export const runtime = isBrowser ? 'browser' : (globalThis as { Bun?: unknown })
 export const enabled = isBrowser || env.EDGEWISE_MODEL_TESTS === '1';
 
 const hub = typeof __EDGEWISE_TEST_HUB__ === 'string' && __EDGEWISE_TEST_HUB__ ? __EDGEWISE_TEST_HUB__ : undefined;
-configure({
+/** The configuration model tests use, also applied inside workers. */
+export const testConfig = {
   allowPreview: true,
-  // One model at a time keeps the browser tab and small CI runners within memory.
   maxLoadedModels: 1,
   ...(env.EDGEWISE_CACHE ? { cacheDir: env.EDGEWISE_CACHE } : {}),
   ...(hub ? { hub: `${hub}/hf`, wasmPaths: `${hub}/cdn/npm/onnxruntime-web@${ORT_WEB}/dist/` } : {}),
-});
+};
+// One model at a time keeps the browser tab and small CI runners within memory.
+configure(testConfig);
 
 /** `describe` when model tests are on, `describe.skip` otherwise. Unloads models afterwards to keep memory flat. */
 export function suite(name: string, fn: () => void) {

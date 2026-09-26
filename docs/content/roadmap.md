@@ -8,13 +8,10 @@ order: 50
 
 Things we want to add, roughly in order. None of them are in the package yet.
 
-## Voice cloning
+## Voice cloning without WebGPU
 
-`speak({ voice: { reference, consent } })` is reserved. It needs a cloning model that runs well on the device and has a licence that allows it. Candidates are being evaluated. Consent will be required in the API: `consent: { attested: true }`.
+Chatterbox's quantized graphs use an ONNX operator the WebAssembly build of ONNX Runtime lacks. A WebAssembly-friendly export would let cloning run in browsers without a GPU. Multilingual cloning is also on the list.
 
-## Worker mode
-
-Run models in a dedicated worker in the browser so the page never blocks. Today, heavy work runs on the calling thread; ONNX Runtime's WebAssembly backend already uses its own threads when the page is cross-origin isolated.
 
 ## More models
 

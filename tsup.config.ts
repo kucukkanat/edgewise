@@ -7,6 +7,7 @@ export default defineConfig({
     'react/index': 'src/react/index.ts',
     'ai-sdk/index': 'src/ai-sdk/index.ts',
     'test/index': 'src/test/index.ts',
+    'worker/index': 'src/worker/index.ts',
     'platform/browser': 'src/platform/browser.ts',
     'platform/server': 'src/platform/server.ts',
   },

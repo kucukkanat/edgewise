@@ -24,6 +24,7 @@ export type Task =
   | 'token-classification'
   | 'lfm-token-classification'
   | 'kokoro'
+  | 'chatterbox'
   | 'sd-turbo'
   | 'chronos-bolt'
   | 'silero-vad'

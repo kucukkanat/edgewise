@@ -58,5 +58,5 @@ Some 4-bit exports use an ONNX operator (`GatherBlockQuantized`) that ONNX Runti
 ## Known limitations
 
 - In browsers, Transformers.js 4.3 serializes model loading, and a load that fails can make later loads on the same page fail with the same error. Reload the page after a failed load.
-- Browsers without WebGPU cannot run `paint`, or `lfm2.5-1.2b` and `lfm2.5-vl-1.6b`.
+- Browsers without WebGPU cannot run `paint`, voice cloning, `lfm2.5-1.2b` or `lfm2.5-vl-1.6b`.
 - Headless and incognito browsers often have a storage quota under 1 GB. Models still load, but are downloaded again next time.
