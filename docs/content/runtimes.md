@@ -13,7 +13,7 @@ Edgewise is one package with two platform layers, picked by the `browser` export
 | --- | --- | --- |
 | Model runtime | ONNX Runtime Web (via Transformers.js 4) | ONNX Runtime for Node (via Transformers.js 4) |
 | GPU | `navigator.gpu` (WebGPU) | vgpu (Dawn, Vulkan / Metal / D3D12) |
-| CPU path | WebAssembly (SIMD, threads when cross-origin isolated) | native CPU |
+| CPU path | WebAssembly (SIMD, threads when [cross-origin isolated](performance#webassembly-threads-need-cross-origin-isolation)) | native CPU |
 | Model cache | Cache API | `~/.cache/edgewise` or `$EDGEWISE_CACHE` |
 | Audio in | `mic()` | `audioSource()` over any PCM stream |
 | Audio out | `.play()` | `toWav()` |
