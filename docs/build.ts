@@ -111,7 +111,7 @@ function renderPage(slug: string, body: string, pageSlugs: Set<string>): { html:
         let h = href;
         // `#page` or `page#section` links between pages become relative .html links.
         const m = /^#?([a-z0-9-]+)(#[a-z0-9-]+)?$/.exec(href);
-        if (m && pageSlugs.has(m[1]) && (href.startsWith('#') ? true : !href.includes('.'))) h = `${m[1] === 'intro' ? 'index' : m[1]}.html${m[2] ?? ''}`;
+        if (m && pageSlugs.has(m[1]) && (href.startsWith('#') ? true : !href.includes('.'))) h = `${m[1]}.html${m[2] ?? ''}`;
         if (/^\s*(javascript|data|vbscript):/i.test(h)) h = '#';
         const ext = /^https?:/.test(h) ? ' rel="noopener"' : '';
         return `<a href="${esc(h)}"${title ? ` title="${esc(title)}"` : ''}${ext}>${text}</a>`;
@@ -249,7 +249,7 @@ function nav(pages: Page[], current: string): string {
     if (!items.length) return '';
     const li = items
       .map((p) => {
-        const href = p.slug === 'intro' ? 'index.html' : `${p.slug}.html`;
+        const href = `${p.slug}.html`;
         const mod = p.eyebrow?.includes('→') && g === 'The six verbs' ? ` <span class="mod">${esc(p.eyebrow.split('·').pop()?.trim() ?? '')}</span>` : '';
         return `<li><a href="${href}"${p.slug === current ? ' aria-current="page"' : ''}>${esc(p.title)}${mod}</a></li>`;
       })
@@ -262,8 +262,7 @@ const LOGO = `<svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"
 
 function layout(p: Page, pages: Page[]): string {
   const i = pages.indexOf(p);
-  const link = (q: Page, cls: string, label: string) =>
-    `<a class="${cls}" href="${q.slug === 'intro' ? 'index.html' : `${q.slug}.html`}"><small>${label}</small><b>${esc(q.title)}</b></a>`;
+  const link = (q: Page, cls: string, label: string) => `<a class="${cls}" href="${`${q.slug}.html`}"><small>${label}</small><b>${esc(q.title)}</b></a>`;
   const pager = `${i > 0 ? link(pages[i - 1], 'prev', '← Previous') : ''}${i < pages.length - 1 ? link(pages[i + 1], 'next', 'Next →') : ''}`;
   const toc = p.headings.map((h) => `<li><a href="#${h.id}">${esc(h.text)}</a></li>`).join('');
   const title = p.slug === 'intro' ? 'Edgewise · on-device AI for TypeScript' : `${p.title} · Edgewise`;
@@ -290,7 +289,7 @@ ${p.slug === 'demos' || p.slug === 'intro' ? `<meta name="ort-web" content="${OR
   <button class="iconbtn" id="menuBtn" aria-label="Open navigation" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
   <a class="brand" href="index.html" aria-label="Edgewise home">${LOGO}<b>edgewise</b></a>
   <span class="ver">v${pkg.version}</span>
-  <nav class="toplinks" aria-label="Primary"><a href="quickstart.html">Quickstart</a><a href="models.html">Models</a><a href="demos.html">Demos</a><a href="api/index.html">API</a><a href="https://github.com/kucukkanat/edgewise" rel="noopener">GitHub</a></nav>
+  <nav class="toplinks" aria-label="Primary"><a href="index.html">Playground</a><a href="intro.html">Docs</a><a href="quickstart.html">Quickstart</a><a href="models.html">Models</a><a href="demos.html">Demos</a><a href="api/index.html">API</a><a href="https://github.com/kucukkanat/edgewise" rel="noopener">GitHub</a></nav>
   <div class="search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off"><div class="results" id="results" hidden></div></div>
   <button class="iconbtn" id="themeBtn" aria-label="Toggle dark mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
 </header>
@@ -351,15 +350,25 @@ async function buildLib() {
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'assets'), { recursive: true });
 const pages = loadPages();
-for (const p of pages) writeFileSync(join(out, p.slug === 'intro' ? 'index.html' : `${p.slug}.html`), layout(p, pages));
+for (const p of pages) writeFileSync(join(out, `${p.slug}.html`), layout(p, pages));
 writeFileSync(
   join(out, 'assets', 'search.json'),
-  JSON.stringify(
-    pages.map((p) => ({ slug: p.slug === 'intro' ? 'index' : p.slug, title: p.title, group: p.group, headings: p.headings, text: p.text.slice(0, 6000) })),
-  ),
+  JSON.stringify(pages.map((p) => ({ slug: p.slug, title: p.title, group: p.group, headings: p.headings, text: p.text.slice(0, 6000) }))),
 );
 writeFileSync(join(out, 'assets', 'models.json'), JSON.stringify(modelsData()));
 for (const f of readdirSync(join(root, 'theme'))) if (!f.startsWith('old-')) cpSync(join(root, 'theme', f), join(out, 'assets', f));
+// The homepage: a live playground of every verb and model.
+{
+  const pg = join(root, 'playground');
+  const html = readFileSync(join(pg, 'index.html'), 'utf8')
+    .replaceAll('{{ort-web}}', ORT_WEB)
+    .replaceAll('{{importmap}}', IMPORT_MAP)
+    .replaceAll('{{version}}', pkg.version)
+    .replaceAll('{{models-json}}', JSON.stringify(modelsData()).replace(/</g, '\\u003c'));
+  writeFileSync(join(out, 'index.html'), html);
+  mkdirSync(join(out, 'play'), { recursive: true });
+  for (const f of readdirSync(pg)) if (f !== 'index.html') cpSync(join(pg, f), join(out, 'play', f), { recursive: true });
+}
 writeFileSync(join(out, '.nojekyll'), '');
 writeFileSync(
   join(out, '404.html'),
@@ -371,7 +380,7 @@ writeFileSync(
       order: 0,
       body: '',
       headings: [],
-      html: '<h1>Page not found</h1><p><a href="index.html">Go to the introduction</a>.</p>',
+      html: '<h1>Page not found</h1><p><a href="intro.html">Go to the introduction</a>.</p>',
       text: '',
     },
     pages,

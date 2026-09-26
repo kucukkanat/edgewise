@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Edgewise · AI that runs on the device</title>
+<meta name="description" content="A live playground for Edgewise: chat, agents, vision, speech, judging, embeddings, images and forecasts, running in your browser. Nothing leaves the page.">
+<meta name="theme-color" content="#06080B">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800;900&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="play/play.css">
+<meta name="ort-web" content="{{ort-web}}">
+<script type="importmap">{{importmap}}</script>
+<link rel="modulepreload" href="lib/index.js">
+</head>
+<body>
+<a class="skip" href="#play">Skip to the playground</a>
+
+<header class="nav" id="nav">
+  <a class="logo" href="index.html" aria-label="Edgewise home">
+    <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3CE0C0"/><stop offset=".5" stop-color="#A48BFF"/><stop offset="1" stop-color="#FF6FAE"/></linearGradient></defs><rect x="1" y="1" width="30" height="30" rx="9" fill="url(#lg)"/><path d="M9 22 L16 9 L23 22" fill="none" stroke="#06080B" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="16" cy="19" r="2.4" fill="#06080B"/></svg>
+    <b>edgewise</b><span class="ver">v{{version}}</span>
+  </a>
+  <nav class="links" aria-label="Sections">
+    <a href="#play">Playground</a><a href="#compose">Compose</a><a href="#models">Models</a><a href="intro.html">Docs</a><a href="https://github.com/kucukkanat/edgewise" rel="noopener">GitHub</a>
+  </nav>
+  <div class="hud" aria-live="polite">
+    <span class="hud-chip" title="Model weights downloaded to this browser"><i class="dot dl"></i><span id="hudDl">0 MB</span> weights</span>
+    <span class="hud-chip privacy" title="Your prompts, audio and images never leave this page"><i class="dot ok"></i><b>0 B</b> of your data sent</span>
+  </div>
+</header>
+
+<main>
+<!-- ============================ HERO ============================ -->
+<section class="hero" id="top">
+  <canvas id="mesh" aria-hidden="true"></canvas>
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <p class="kicker reveal"><span class="pulse"></span>Running in this tab · no server · no API key</p>
+      <h1 class="headline" aria-label="Six verbs. Thirty models. Zero servers.">
+        <span class="line"><span class="w">Six</span> <span class="w">verbs.</span></span>
+        <span class="line"><span class="w grad">Thirty</span> <span class="w grad">models.</span></span>
+        <span class="line"><span class="w">Zero</span> <span class="w strike">servers.</span></span>
+      </h1>
+      <p class="lede reveal">Edgewise runs language, vision, speech, judging, embedding, image and forecasting models <em>on the device</em>: in the browser through WebGPU or WebAssembly, and in Bun or Node. Right now, it can <span class="typer" id="typer">transcribe a meeting</span><span class="caret"></span></p>
+      <div class="ctas reveal">
+        <a class="btn glow" href="#play">Try it live <span aria-hidden="true">↓</span></a>
+        <button class="install" data-copy="bun add edgewise"><span class="p">$</span> bun add edgewise <span class="cp">copy</span></button>
+      </div>
+    </div>
+    <aside class="device reveal" aria-live="polite">
+      <div class="device-head"><span class="lights"><i></i><i></i><i></i></span><code>await capabilities()</code><span class="live"><i></i>this device</span></div>
+      <pre id="caps"><span class="c">// probing your hardware with the real library…</span></pre>
+      <div class="device-foot">
+        <div class="ring" id="runRing" style="--p:0"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5"/><circle class="v" cx="18" cy="18" r="15.5"/></svg><b id="runN">–</b></div>
+        <p id="runText">Checking which models this device can run…</p>
+      </div>
+    </aside>
+  </div>
+  <div class="verb-rail reveal" id="verbRail"></div>
+  <a class="scroll-cue" href="#play" aria-label="Scroll to the playground"><span></span></a>
+</section>
+
+<!-- ============================ PLAYGROUND ============================ -->
+<section class="play" id="play">
+  <div class="sec-head reveal">
+    <p class="eyebrow">The playground</p>
+    <h2>Pick a verb. Pick a model. <span class="grad">Press run.</span></h2>
+    <p>Every demo below calls the published library in your browser. Models download once from Hugging Face and stay cached. What you type, say or show stays on this page.</p>
+  </div>
+  <div class="tabs reveal" role="tablist" id="tabs"></div>
+  <div class="stage reveal" id="stage"></div>
+</section>
+
+<!-- ============================ COMPOSE ============================ -->
+<section class="compose" id="compose">
+  <div class="sec-head reveal">
+    <p class="eyebrow">Verbs compose</p>
+    <h2>A voice assistant in <span class="grad">four lines</span>.</h2>
+    <p>Listen with Silero VAD, transcribe with Moonshine, think with LFM2.5, answer with Kokoro. The reply streams into speech sentence by sentence, so it starts talking before it finishes thinking.</p>
+  </div>
+  <div class="pipe reveal" id="pipe"></div>
+</section>
+
+<!-- ============================ MODELS ============================ -->
+<section class="models" id="models">
+  <div class="sec-head reveal">
+    <p class="eyebrow">The registry</p>
+    <h2><span id="modelCount">30</span> models, <span class="grad">one API</span>.</h2>
+    <p>Each model declares its verb, inputs, sizes and devices. The badge shows whether <em>this</em> device can run it. Click one to try it.</p>
+  </div>
+  <div class="filters reveal" id="filters"></div>
+  <div class="grid" id="grid"></div>
+</section>
+
+<!-- ============================ START ============================ -->
+<section class="start" id="start">
+  <div class="start-card reveal">
+    <h2>Ship AI that works <span class="grad">offline</span>, costs nothing per call and never sees your users' data.</h2>
+    <pre class="start-code"><code><span class="k">import</span> { generate } <span class="k">from</span> <span class="s">'edgewise'</span>;
+
+<span class="k">for await</span> (<span class="k">const</span> delta <span class="k">of</span> <span class="f">generate</span>({ model: <span class="s">'text:default'</span>, input: <span class="s">'Hello!'</span> })) {
+  out.textContent += delta;
+}</code></pre>
+    <div class="ctas"><a class="btn glow" href="quickstart.html">Read the quickstart</a><a class="btn ghost" href="intro.html">Browse the docs</a><button class="install" data-copy="bun add edgewise"><span class="p">$</span> bun add edgewise <span class="cp">copy</span></button></div>
+  </div>
+  <footer class="foot">Edgewise {{version}} · MIT licence · Built with Transformers.js, ONNX Runtime and vgpu · <a href="models.html">Model licences</a></footer>
+</section>
+</main>
+
+<div class="dock" id="dock" hidden>
+  <div class="dock-ring" style="--p:0"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5"/><circle class="v" cx="18" cy="18" r="15.5"/></svg></div>
+  <div class="dock-text"><b id="dockTitle">Loading</b><span id="dockSub"></span></div>
+</div>
+
+<script type="application/json" id="modelsData">{{models-json}}</script>
+<script type="module" src="play/play.js"></script>
+</body>
+</html>
