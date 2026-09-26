@@ -1,5 +1,5 @@
 import { detectSpeech } from '../../src/helpers/index.ts';
-import { generate, speak } from '../../src/index.ts';
+import { audioSource, generate, speak } from '../../src/index.ts';
 import { resample } from '../../src/platform/audio.ts';
 import { it2, on, report, suite } from './setup.ts';
 
@@ -62,5 +62,24 @@ suite('speak, STT and VAD · real models', () => {
     expect(segs.length).toBeGreaterThan(0);
     expect(segs[0].start).toBeGreaterThan(0.7);
     expect(segs[0].start).toBeLessThan(1.4);
+  });
+
+  it2(on(all, 'reports speech start before the utterance ends (for barge-in)'), async () => {
+    const a = await hello();
+    const speech = resample(a.samples, a.sampleRate, 16000);
+    const clip = new Float32Array(16000 * 5);
+    clip.set(speech.subarray(0, Math.min(speech.length, 16000 * 3)), 16000);
+    // Stream it in 100 ms chunks, like a microphone.
+    async function* chunks() {
+      for (let i = 0; i < clip.length; i += 1600) yield clip.subarray(i, i + 1600);
+    }
+    const events: string[] = [];
+    let probs = 0;
+    const src = audioSource(chunks(), {
+      vad: { onSpeechStart: () => events.push('start'), onSpeechEnd: () => events.push('end'), onFrame: () => probs++ },
+    });
+    for await (const _ of src.utterances()) events.push('yield');
+    expect(events.slice(0, 3)).toEqual(['start', 'end', 'yield']);
+    expect(probs).toBeGreaterThan(100);
   });
 });

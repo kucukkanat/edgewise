@@ -483,6 +483,81 @@ function md(text) {
     .join('');
 }
 
+/** Tools shared by the agent chat and the voice assistant. All run in this tab except weather. */
+function agentTools(notes) {
+  // Every tool runs in this tab. Only "weather" touches the network, and it is off by default.
+  return {
+    calculator: {
+      on: true,
+      label: 'Calculator',
+      note: 'exact arithmetic: + − × ÷ ^ % sqrt sin cos log pi',
+      description: 'Evaluate an arithmetic expression exactly. Supports + - * / ^, parentheses, sqrt, sin, cos, tan, log, ln, abs, round, pi and e. For percentages write 18% * 240 (18 percent of 240).',
+      schema: { type: 'object', properties: { expression: { type: 'string', description: 'for example (17 * 23) / 4' } }, required: ['expression'] },
+      run: ({ expression }) => ({ expression, result: calc(expression) }),
+    },
+    get_time: {
+      on: true,
+      label: 'Clock',
+      note: 'the date and time, in any time zone',
+      description: 'Get the current date and time, optionally in an IANA time zone such as Europe/Amsterdam or Asia/Tokyo.',
+      schema: { type: 'object', properties: { timezone: { type: 'string' } } },
+      run: ({ timezone }) => {
+        const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return { timezone: tz, now: new Date().toLocaleString('en-GB', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' }) };
+      },
+    },
+    convert_units: {
+      on: true,
+      label: 'Unit converter',
+      note: 'km/mi, kg/lb, °C/°F, m/ft, l/gal, cm/in',
+      description: 'Convert a value between units: km, mi, m, ft, cm, in, kg, lb, g, oz, l, gal, c, f.',
+      schema: { type: 'object', properties: { value: { type: 'number' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] },
+      run: ({ value, from, to }) => ({ value, from, to, result: convert(value, from, to) }),
+    },
+    roll_dice: {
+      on: false,
+      label: 'Dice',
+      note: 'random rolls, for games and decisions',
+      description: 'Roll dice and return each result.',
+      schema: { type: 'object', properties: { count: { type: 'integer', minimum: 1, maximum: 20 }, sides: { type: 'integer', minimum: 2, maximum: 1000 } }, required: ['sides'] },
+      run: ({ count = 1, sides }) => {
+        const rolls = Array.from({ length: Math.min(20, count) }, () => 1 + Math.floor(Math.random() * sides));
+        return { rolls, total: rolls.reduce((a, b) => a + b, 0) };
+      },
+    },
+    save_note: {
+      on: true,
+      label: 'Notes',
+      note: 'remembers things for this session (save_note, list_notes)',
+      description: 'Save a short note for later in this conversation.',
+      schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+      run: ({ text }) => (notes.push(text), { saved: text, count: notes.length }),
+      extra: {
+        list_notes: {
+          description: 'List every note saved so far.',
+          schema: { type: 'object', properties: {} },
+          run: () => ({ notes }),
+        },
+      },
+    },
+    get_weather: {
+      on: false,
+      label: 'Weather',
+      note: 'uses the network: sends the city to Open-Meteo',
+      net: true,
+      description: 'Get the current weather for a city.',
+      schema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+      run: async ({ city }) => {
+        const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(city)}`).then((x) => x.json());
+        const p = g.results?.[0];
+        if (!p) throw new Error(`No place called ${city}.`);
+        const w = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&current=temperature_2m,wind_speed_10m,precipitation`).then((x) => x.json());
+        return { place: `${p.name}, ${p.country}`, temperature_c: w.current?.temperature_2m, wind_kmh: w.current?.wind_speed_10m, precipitation_mm: w.current?.precipitation };
+      },
+    },
+  };
+}
+
 /* ---------- tools for the agent chat: no eval, just small parsers ---------- */
 
 /** A safe arithmetic evaluator (recursive descent). */
@@ -585,77 +660,7 @@ CASES.generate = [
         Tutor: 'You are a patient tutor. Explain step by step and end with one short question that checks understanding.',
       };
       const notes = [];
-      // Every tool runs in this tab. Only "weather" touches the network, and it is off by default.
-      const TOOLS = {
-        calculator: {
-          on: true,
-          label: 'Calculator',
-          note: 'exact arithmetic: + − × ÷ ^ % sqrt sin cos log pi',
-          description: 'Evaluate an arithmetic expression exactly. Supports + - * / ^ %, parentheses, sqrt, sin, cos, tan, log, ln, abs, round, pi and e.',
-          schema: { type: 'object', properties: { expression: { type: 'string', description: 'for example (17 * 23) / 4' } }, required: ['expression'] },
-          run: ({ expression }) => ({ expression, result: calc(expression) }),
-        },
-        get_time: {
-          on: true,
-          label: 'Clock',
-          note: 'the date and time, in any time zone',
-          description: 'Get the current date and time, optionally in an IANA time zone such as Europe/Amsterdam or Asia/Tokyo.',
-          schema: { type: 'object', properties: { timezone: { type: 'string' } } },
-          run: ({ timezone }) => {
-            const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-            return { timezone: tz, now: new Date().toLocaleString('en-GB', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' }) };
-          },
-        },
-        convert_units: {
-          on: true,
-          label: 'Unit converter',
-          note: 'km/mi, kg/lb, °C/°F, m/ft, l/gal, cm/in',
-          description: 'Convert a value between units: km, mi, m, ft, cm, in, kg, lb, g, oz, l, gal, c, f.',
-          schema: { type: 'object', properties: { value: { type: 'number' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] },
-          run: ({ value, from, to }) => ({ value, from, to, result: convert(value, from, to) }),
-        },
-        roll_dice: {
-          on: false,
-          label: 'Dice',
-          note: 'random rolls, for games and decisions',
-          description: 'Roll dice and return each result.',
-          schema: { type: 'object', properties: { count: { type: 'integer', minimum: 1, maximum: 20 }, sides: { type: 'integer', minimum: 2, maximum: 1000 } }, required: ['sides'] },
-          run: ({ count = 1, sides }) => {
-            const rolls = Array.from({ length: Math.min(20, count) }, () => 1 + Math.floor(Math.random() * sides));
-            return { rolls, total: rolls.reduce((a, b) => a + b, 0) };
-          },
-        },
-        save_note: {
-          on: true,
-          label: 'Notes',
-          note: 'remembers things for this session (save_note, list_notes)',
-          description: 'Save a short note for later in this conversation.',
-          schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
-          run: ({ text }) => (notes.push(text), { saved: text, count: notes.length }),
-          extra: {
-            list_notes: {
-              description: 'List every note saved so far.',
-              schema: { type: 'object', properties: {} },
-              run: () => ({ notes }),
-            },
-          },
-        },
-        get_weather: {
-          on: false,
-          label: 'Weather',
-          note: 'uses the network: sends the city to Open-Meteo',
-          net: true,
-          description: 'Get the current weather for a city.',
-          schema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
-          run: async ({ city }) => {
-            const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(city)}`).then((x) => x.json());
-            const p = g.results?.[0];
-            if (!p) throw new Error(`No place called ${city}.`);
-            const w = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&current=temperature_2m,wind_speed_10m,precipitation`).then((x) => x.json());
-            return { place: `${p.name}, ${p.country}`, temperature_c: w.current?.temperature_2m, wind_kmh: w.current?.wind_speed_10m, precipitation_mm: w.current?.precipitation };
-          },
-        },
-      };
+      const TOOLS = agentTools(notes);
       const starters = ['What is 17% of 2,349, rounded to two decimals?', 'What time is it in Tokyo right now?', 'Convert 42 km to miles, then 180 lb to kg.', 'Remember that my train leaves at 18:05 from platform 4.', 'What did I ask you to remember?', 'Roll two 20-sided dice.'];
       const r = layout(
         panel,
@@ -847,7 +852,7 @@ async function send(text) {
                 out = bubble('ai');
                 out.classList.add('typing');
               } else if (ev.type === 'tool-result') {
-                const c = $$('.msg.toolcall', r.win).find((x) => x.dataset.id === ev.result.id) ?? $$('.msg.toolcall', r.win).at(-1);
+                const c = $$('.msg.toolcall', r.win).findLast((x) => x.dataset.id === ev.result.id) ?? $$('.msg.toolcall', r.win).at(-1);
                 if (c) {
                   $('.res', c).textContent = ev.result.error ? `✗ ${ev.result.error}` : `→ ${short(JSON.stringify(ev.result.output), 90)}`;
                   c.classList.add(ev.result.error ? 'bad' : 'ok');
@@ -1179,7 +1184,7 @@ const { text, toolCalls } = await generate({
               div.dataset.id = e.call.id;
               r.calls.append(div);
             } else if (e.type === 'tool-result') {
-              const div = $$('.call', r.calls).find((d) => d.dataset.id === e.result.id) ?? $$('.call', r.calls).at(-1);
+              const div = $$('.call', r.calls).findLast((d) => d.dataset.id === e.result.id) ?? $$('.call', r.calls).at(-1);
               if (div) $('.ok', div).textContent = e.result.error ? '✗' : '✓';
             } else if (e.type === 'text-delta') {
               tr.done();
@@ -3311,125 +3316,495 @@ const odd = await detectAnomalies(history, {
 /* =================================================================== compose */
 
 (function compose() {
-  const stages = [
-    { k: 'mic', c: 'var(--vad)', ic: '🎙', name: 'mic({ vad: true })', what: 'Silero VAD finds where you stop talking', id: 'silero-vad' },
-    { k: 'stt', c: 'var(--generate)', ic: '✍️', name: "generate · 'stt:tiny'", what: 'Moonshine turns speech into text', id: 'moonshine-tiny' },
-    { k: 'lm', c: 'var(--embed)', ic: '💭', name: "generate · 'text:default'", what: 'LFM2.5 writes a reply, streaming', id: 'lfm2.5-350m' },
-    { k: 'tts', c: 'var(--speak)', ic: '🔊', name: "speak · 'voice:default'", what: 'Kokoro speaks each sentence as it arrives', id: 'kokoro-82m' },
-  ];
-  const total = stages.reduce((a, s) => a + (byId[s.id]?.mb ?? 0), 0);
-  $('#pipe').innerHTML = `<div><div class="nodes">${stages
-    .map((s, i) => `${i ? `<div class="wire" data-w="${s.k}"></div>` : ''}<div class="node" style="--c:${s.c}" data-n="${s.k}"><span class="ic">${s.ic}</span><span><b>${s.name}</b><span>${s.what}</span></span><em>${esc(byId[s.id]?.size ?? '')}</em></div>`)
-    .join('')}</div>
-    <div class="level" style="margin-top:16px"><i id="lvl"></i></div>
-    <div class="row" style="margin-top:16px"><button class="run" id="talk" style="--c:var(--embed)">Start talking <small>~${total} MB total</small></button><button class="run secondary" id="hang" hidden>Stop</button></div>
-    <div class="row" style="margin-top:10px"><input type="text" id="typed" placeholder="…or type a message and press Enter"></div>
-    <div class="status" id="pst"></div></div>
-    <div><div class="chat" id="chat"><div class="msg ai">Hi! Press <b>Start talking</b> and ask me anything. Everything, including your voice, stays in this tab.</div></div>
-    <details class="code" style="border-radius:14px;margin-top:12px;border:1px solid var(--line)"><summary>The code</summary><pre>${hl(`import { generate, mic, speak } from 'edgewise';
-
-const microphone = await mic({ vad: true });
-for await (const heard of microphone.utterances()) {
-  const { text } = await generate({ model: 'stt:tiny', input: heard });   // audio → text
-  const reply = generate({ model: 'text:default', input: text });         // text → text, streaming
-  await speak({ model: 'voice:default', input: reply }).play();           // text stream → audio
-}`)}</pre></details></div>`;
-  const on = (k, v) => {
-    $(`[data-n="${k}"]`)?.classList.toggle('on', v);
-    $(`[data-w="${k}"]`)?.classList.toggle('on', v);
+  const root = $('#pipe');
+  const STATES = {
+    off: { ic: '⏻', label: 'Off', hint: 'Press Start and speak. Interrupt it any time by talking over it.', c: 'var(--muted)' },
+    loading: { ic: '⤓', label: 'Loading models', hint: '', c: 'var(--forecast)' },
+    listening: { ic: '👂', label: 'Listening', hint: 'Say something, then pause.', c: 'var(--vad)' },
+    hearing: { ic: '🎙', label: 'Hearing you', hint: 'Keep going; a short pause ends your turn.', c: 'var(--vad)' },
+    transcribing: { ic: '✍️', label: 'Transcribing', hint: '', c: 'var(--generate)' },
+    thinking: { ic: '💭', label: 'Thinking', hint: '', c: 'var(--embed)' },
+    tool: { ic: '🛠', label: 'Calling a tool', hint: '', c: 'var(--evaluate)' },
+    speaking: { ic: '🔊', label: 'Speaking', hint: 'Talk over it to interrupt.', c: 'var(--speak)' },
+    interrupted: { ic: '✋', label: 'Interrupted', hint: 'Go ahead, I am listening.', c: 'var(--bad)' },
   };
-  const chat = $('#chat');
+  const NODES = [
+    { k: 'vad', label: 'Voice activity', c: 'var(--vad)', models: ['silero-vad'] },
+    { k: 'stt', label: 'Speech to text', c: 'var(--generate)', models: STT.filter((id) => id.startsWith('moonshine') || id === 'whisper-tiny-en') },
+    { k: 'brain', label: 'Brain + tool calls', c: 'var(--embed)', models: TOOL_LMS },
+    { k: 'voice', label: 'Voice', c: 'var(--speak)', models: ['kokoro-82m'] },
+  ];
+  const DEF = { vad: 'silero-vad', stt: 'moonshine-tiny', brain: 'lfm2.5-350m', voice: 'kokoro-82m' };
+  const notes = [];
+  const timers = new Map();
+  const pending = [];
+  const tools = agentTools(notes);
+  tools.set_timer = {
+    on: true,
+    label: 'Timer',
+    note: 'counts down, then tells you',
+    description: 'Start a countdown timer. The assistant announces when it ends.',
+    schema: { type: 'object', properties: { seconds: { type: 'integer', minimum: 1, maximum: 3600 }, label: { type: 'string' } }, required: ['seconds'] },
+    run: ({ seconds, label = 'timer' }) => (startTimer(seconds, label), { started: true, seconds, label }),
+  };
+  const toolOrder = ['calculator', 'get_time', 'convert_units', 'set_timer', 'save_note', 'roll_dice', 'get_weather'];
+  root.innerHTML = `<div class="va">
+    <div class="va-left">
+      <div class="orb" data-r="orb" data-state="off"><div class="orb-ring"></div><div class="orb-core"><span data-r="oic">⏻</span></div><div class="orb-text"><b data-r="olabel">Off</b><small data-r="ohint">${STATES.off.hint}</small></div></div>
+      <div class="va-nodes" data-r="nodes">${NODES.map((n) => `<div class="vn" data-n="${n.k}" style="--c:${n.c}"><i></i><span class="vl">${n.label}</span>${n.models.length > 1 ? `<select data-m="${n.k}" aria-label="${n.label} model">${n.models.map((id) => `<option value="${id}"${id === DEF[n.k] ? ' selected' : ''}>${id}</option>`).join('')}</select>` : `<code>${n.models[0]}</code>`}<em data-b="${n.k}">not loaded</em></div>`).join('')}</div>
+      <div class="row"><button class="run" data-r="start" style="--c:var(--embed)">Start talking <small data-r="total"></small></button><button class="run secondary" data-r="stop" hidden>Stop</button><label class="check"><input type="checkbox" data-r="phones"> 🎧 Headphones</label></div>
+      <details class="adv"><summary>Voice</summary>
+        <div class="row"><select data-r="voice" style="flex:1"></select><button class="chip" data-r="preview" type="button">▶ preview</button></div>
+        <div class="field"><label>Speed</label><div class="range"><input type="range" data-r="speed" min="0.7" max="1.5" step="0.05" value="1.05"><output data-r="speedv">1.05×</output></div></div>
+      </details>
+      <details class="adv"><summary>Tools</summary><div class="toolchips" data-r="tools">${toolOrder.map((k) => `<label class="tc${tools[k].net ? ' net' : ''}" title="${esc(tools[k].note)}"><input type="checkbox" data-t="${k}" ${tools[k].on ? 'checked' : ''}>${esc(tools[k].label)}</label>`).join('')}</div><div class="timers" data-r="timers"></div></details>
+      <details class="adv"><summary>Listening &amp; noise</summary>
+        <div class="field"><label>Speech threshold</label><div class="range"><input type="range" data-v="positiveThreshold" min="0.3" max="0.95" step="0.05" value="0.6"><output></output></div></div>
+        <div class="field"><label>End of turn after silence (ms)</label><div class="range"><input type="range" data-v="redemptionMs" min="200" max="1500" step="50" value="550"><output></output></div></div>
+        <div class="field"><label>Ignore sounds shorter than (ms)</label><div class="range"><input type="range" data-v="minSpeechMs" min="100" max="800" step="50" value="250"><output></output></div></div>
+        <div class="field"><label>Interrupt after talking over it for (ms)</label><div class="range"><input type="range" data-r="hold" min="0" max="800" step="20" value="260"><output data-r="holdv"></output></div></div>
+        <div class="row"><label class="check"><input type="checkbox" data-a="noiseSuppression" checked> Noise suppression</label><label class="check"><input type="checkbox" data-a="echoCancellation" checked> Echo cancellation</label><label class="check"><input type="checkbox" data-a="autoGainControl" checked> Auto gain</label></div>
+        <p class="ms" data-r="restart">Microphone settings apply the next time you press Start.</p>
+      </details>
+    </div>
+    <div class="va-right">
+      <div class="chat va-chat" data-r="chat"><div class="msg ai">Hi! Press <b>Start talking</b> and ask me something: the time in Tokyo, a timer for one minute, what 18% of 240 is. Talk over me to interrupt. Everything, including your voice, stays in this tab.</div></div>
+      <form class="composer" data-r="tform"><input type="text" data-r="typed" placeholder="…or type a message and press Enter" style="flex:1"></form>
+      <details class="code" style="border-radius:14px;border:1px solid var(--line)"><summary>The code</summary><pre data-r="code"></pre></details>
+    </div>
+  </div>`;
+  const r = {};
+  for (const el of $$('[data-r]', root)) r[el.dataset.r] = el;
+  const models = () => Object.fromEntries(NODES.map((n) => [n.k, $(`select[data-m="${n.k}"]`, root)?.value ?? n.models[0]]));
+  const total = () => {
+    const m = models();
+    r.total.textContent = `~${mb(Object.values(m).reduce((a, id) => a + (byId[id]?.mb ?? 0) * 2 ** 20, 0))}`;
+  };
+  total();
+  r.code.innerHTML = hl(`import { generate, mic, speak } from 'edgewise';
+
+let turn = null; // the reply in progress: cancel it to interrupt
+const microphone = await mic({
+  vad: { onSpeechStart: () => turn?.abort(), redemptionMs: 550 }, // barge-in
+  noiseSuppression: true,
+  echoCancellation: true,
+});
+
+for await (const heard of microphone.utterances()) {
+  turn = new AbortController();
+  const { signal } = turn;
+  const { text } = await generate({ model: 'stt:tiny', input: heard, signal });
+  const reply = generate({ model: 'lfm2.5-350m', input: text, tools, signal });   // streams, calls tools
+  speak({ model: 'voice:default', voice: 'af_heart', input: reply, signal }).play() // talks while it thinks
+    .catch(() => {});                                                          // AbortError on barge-in
+}`);
+
+  /* ---------- UI state ---------- */
+  let state = 'off';
+  const DEBUG = new URLSearchParams(location.search).has('debug');
+  const dbg = (...a) => DEBUG && console.log('[va]', (performance.now() / 1000).toFixed(1), ...a);
+  const setState = (s, hint) => {
+    dbg('state', s, hint ?? '');
+    state = s;
+    const d = STATES[s];
+    r.orb.dataset.state = s;
+    r.orb.style.setProperty('--oc', d.c);
+    r.oic.textContent = d.ic;
+    r.olabel.textContent = d.label;
+    r.ohint.textContent = hint ?? d.hint;
+    const active = { hearing: 'vad', listening: 'vad', transcribing: 'stt', thinking: 'brain', tool: 'brain', speaking: 'voice' }[s];
+    $$('.vn', root).forEach((n) => n.classList.toggle('on', n.dataset.n === active));
+  };
+  const badge = (k, text, cls = '') => {
+    const b = $(`[data-b="${k}"]`, root);
+    b.textContent = text;
+    b.className = cls;
+  };
+  const loaded = new Set();
+  // The brain runs in a Web Worker (edgewise/worker): while it thinks, the main thread keeps running VAD,
+  // so barge-in stays instant even without a GPU. Falls back to the main thread if workers fail.
+  let brainP = null;
+  const brainApi = () =>
+    (brainP ??= lib.then(async (ew) => {
+      try {
+        const w = ew.worker.connectWorker(new Worker(new URL('./va-worker.js', import.meta.url), { type: 'module' }));
+        const hub = new URLSearchParams(location.search).get('hub');
+        await w.configure({ allowPreview: true, ...(hub ? { hub: `${hub}/hf`, wasmPaths: `${hub}/cdn/npm/onnxruntime-web@${$('meta[name="ort-web"]').content}/dist/` } : {}) });
+        await w.models();
+        return w;
+      } catch (err) {
+        console.warn('worker unavailable, running the brain on the main thread', err);
+        return ew;
+      }
+    }));
+  const loaderFor = (k, id) => {
+    const files = new Map();
+    return (e) => {
+      if (e.type === 'download') {
+        files.set(e.file, e);
+        let l = 0;
+        let t = 0;
+        for (const f of files.values()) ((l += f.loaded), (t += f.total || f.loaded));
+        const pct = t ? Math.round((l / t) * 100) : 0;
+        badge(k, `downloading ${pct}% · ${mb(t)}`, 'busy');
+        if (state === 'loading') r.ohint.textContent = `downloading ${id} · ${pct}% of ${mb(t)} · cached afterwards`;
+      } else if (e.type === 'compile') badge(k, 'compiling…', 'busy');
+      else if (e.type === 'ready') (badge(k, `ready · ${e.device}`, 'ok'), loaded.add(id));
+    };
+  };
+  for (const sel of $$('select[data-m]', root)) {
+    sel.addEventListener('change', () => {
+      const k = sel.dataset.m;
+      badge(k, state === 'off' ? 'not loaded' : 'loads on next turn');
+      total();
+    });
+  }
+  const ensure = async (ew, k) => {
+    const id = models()[k];
+    if (loaded.has(id)) return id;
+    badge(k, 'loading…', 'busy');
+    if (state === 'loading' || !busy()) r.ohint.textContent = `loading ${id}…`;
+    const api = k === 'brain' ? await brainApi() : ew;
+    await api.preload([id], { onProgress: loaderFor(k, id), allowPreview: true });
+    if (k === 'brain' && api !== ew) {
+      loaded.add(id);
+      badge(k, 'ready · in a worker', 'ok');
+      return id;
+    }
+    loaded.add(id);
+    const m = ew.loadedModels?.().find?.((x) => x.id === id);
+    badge(k, `ready${m?.device ? ` · ${m.device}` : ''}`, 'ok');
+    return id;
+  };
+  for (const el of $$('[data-v]', root)) {
+    const out = el.nextElementSibling;
+    const show = () => (out.textContent = el.value);
+    el.addEventListener('input', show);
+    show();
+  }
+  const holdShow = () => (r.holdv.textContent = r.phones.checked ? 'instant' : `${r.hold.value}`);
+  r.hold.addEventListener('input', holdShow);
+  r.phones.addEventListener('change', holdShow);
+  holdShow();
+  r.speed.addEventListener('input', () => (r.speedv.textContent = `${(+r.speed.value).toFixed(2)}×`));
+  lib.then(async (ew) => {
+    const voices = await ew.listVoices('kokoro-82m');
+    const groups = { 'US female': [], 'US male': [], 'UK female': [], 'UK male': [] };
+    for (const v of voices) groups[`${v.id[0] === 'b' ? 'UK' : 'US'} ${v.gender}`]?.push(v);
+    r.voice.innerHTML = Object.entries(groups)
+      .map(([g, vs]) => `<optgroup label="${g}">${vs.map((v) => `<option value="${v.id}"${v.id === 'af_heart' ? ' selected' : ''}>${esc(v.name)} · ${esc(v.grade)}</option>`).join('')}</optgroup>`)
+      .join('');
+  });
+
+  /* ---------- transcript ---------- */
+  const scroll = () => (r.chat.scrollTop = r.chat.scrollHeight);
   const bubble = (who, text = '') => {
     const d = document.createElement('div');
     d.className = `msg ${who}`;
     d.textContent = text;
-    chat.append(d);
-    chat.scrollTop = chat.scrollHeight;
+    r.chat.append(d);
+    scroll();
     return d;
   };
+  const note = (text) => {
+    const d = bubble('sys', text);
+    return d;
+  };
+
+  /* ---------- playback with timing, so interruptions know what was said ---------- */
   const history = [];
-  let busy = false;
-  async function answer(ew, text) {
-    busy = true;
+  let turn = null;
+  let mic = null;
+  let lastSpoken = '';
+  let speechRun = 0;
+  let ignoreNext = false;
+  let heardDuringReply = false;
+  const busy = () => !!turn;
+
+  function interrupt(reason = 'interrupted') {
+    if (!turn) return;
+    const t = turn;
+    turn = null;
+    t.ac.abort();
+    t.pl?.stop();
+    const now = audio().currentTime;
+    const said = t.said.filter((x) => x.start <= now).map((x) => x.text).join(' ');
+    const full = t.text;
+    if (t.out) {
+      t.out.innerHTML = `${esc(said || '')}${said ? ' ' : ''}<span class="cut">${esc(full.slice(said.length).trim())}</span> <span class="tag">✂ ${reason}</span>`;
+    }
+    if (full) history.push({ role: 'assistant', content: `${said || '…'} (interrupted by the user)` });
+    for (const c of $$('.msg.toolcall .res', r.chat)) if (c.textContent === 'running…') c.textContent = '✗ cancelled';
+    setState('interrupted');
+  }
+
+  async function runTurn(ew, text) {
+    if (turn) interrupt();
+    const ac = new AbortController();
+    const t = { ac, pl: player(), said: [], text: '', out: null };
+    turn = t;
+    const { signal } = ac;
+    history.push({ role: 'user', content: text });
     try {
-      history.push({ role: 'user', content: text });
-      on('lm', true);
-      const tr = tracker('lfm2.5-350m');
-      const reply = ew.generate({ model: 'lfm2.5-350m', system: 'You are a friendly voice assistant running entirely inside a web browser. Reply in one or two short spoken sentences, no lists or markdown.', messages: history.slice(-6), maxTokens: 120, onProgress: tr.onProgress });
-      const b = bubble('ai');
-      let full = '';
-      async function* tee() {
-        for await (const d of reply) {
-          tr.done();
-          full += d;
-          b.textContent = full;
-          chat.scrollTop = chat.scrollHeight;
-          yield d;
+      const brain = await ensure(ew, 'brain');
+      await ensure(ew, 'voice');
+      if (signal.aborted) return;
+      setState('thinking');
+      const on = $$('input[data-t]', r.tools).filter((c) => c.checked).map((c) => c.dataset.t);
+      const toolSet = {};
+      if (byId[brain]?.features.includes('tools')) {
+        for (const k of on) {
+          const d = tools[k];
+          toolSet[k] = ew.tool({ description: d.description, input: { jsonSchema: d.schema }, execute: async (a) => d.run(a) });
+          for (const [xk, xd] of Object.entries(d.extra ?? {})) toolSet[xk] = ew.tool({ description: xd.description, input: { jsonSchema: xd.schema }, execute: async (a) => xd.run(a) });
         }
-        on('lm', false);
       }
-      const t2 = tracker('kokoro-82m');
-      on('tts', true);
-      await ew.speak({ model: 'kokoro-82m', voice: 'af_heart', input: tee(), onProgress: t2.onProgress }).play();
-      t2.done();
-      history.push({ role: 'assistant', content: full });
-    } finally {
-      on('lm', false);
-      on('tts', false);
-      busy = false;
+      const bw = await brainApi();
+      const run = bw.generate({
+        model: brain,
+        system:
+          'You are a friendly voice assistant running inside the user\'s web browser. Reply in one or two short spoken sentences: no lists, no markdown, no emojis. Use the tools for arithmetic, the time, unit conversions, timers and notes, and never guess their results.',
+        messages: history.slice(-12),
+        ...(Object.keys(toolSet).length ? { tools: toolSet, maxSteps: 4 } : {}),
+        maxTokens: 160,
+        temperature: 0.4,
+        allowPreview: true,
+        signal,
+        onProgress: loaderFor('brain', brain),
+      });
+      // Text deltas feed speech as they arrive.
+      const q = [];
+      let wake = null;
+      let ended = false;
+      const push = (d) => (q.push(d), wake?.());
+      async function* deltas() {
+        for (;;) {
+          if (q.length) yield q.shift();
+          else if (ended) return;
+          else await new Promise((res) => (wake = res));
+        }
+      }
+      const speakTask = (async () => {
+        const sp = ew.speak({ model: 'kokoro-82m', voice: r.voice.value || 'af_heart', speed: +r.speed.value, input: deltas(), signal });
+        for await (const c of sp) {
+          if (signal.aborted) break;
+          const at = t.pl.push(c.samples, c.sampleRate);
+          t.said.push({ text: c.text, start: at.start });
+          const ctx = audio();
+          setTimeout(() => turn === t && state !== 'tool' && setState('speaking'), Math.max(0, (at.start - ctx.currentTime) * 1000));
+        }
+        await sp;
+      })();
+      const eventTask = (async () => {
+        for await (const e of run.events) {
+          if (signal.aborted) break;
+          if (e.type === 'text-delta') {
+            t.out ??= bubble('ai');
+            t.text += e.delta;
+            t.out.innerHTML = md(t.text);
+            scroll();
+            push(e.delta.replace(/[*_#`]/g, ''));
+          } else if (e.type === 'tool-call') {
+            setState('tool', `${e.call.name}(${short(JSON.stringify(e.call.input), 40)})`);
+            const c = bubble('toolcall');
+            c.dataset.id = e.call.id;
+            c.innerHTML = `<span class="fn">${esc(e.call.name)}</span><span class="ar">${esc(JSON.stringify(e.call.input))}</span><span class="res">running…</span>`;
+            t.out = null;
+          } else if (e.type === 'tool-result') {
+            const c = $$('.msg.toolcall', r.chat).findLast((x) => x.dataset.id === e.result.id) ?? $$('.msg.toolcall', r.chat).at(-1);
+            if (c) ($('.res', c).textContent = e.result.error ? `✗ ${e.result.error}` : `→ ${short(JSON.stringify(e.result.output), 70)}`), c.classList.add(e.result.error ? 'bad' : 'ok');
+            setState('thinking');
+          }
+        }
+        ended = true;
+        wake?.();
+        const res = await run;
+        if (!t.text && res.text) {
+          t.out ??= bubble('ai');
+          t.text = res.text;
+          t.out.innerHTML = md(res.text);
+          push(res.text.replace(/[*_#`]/g, ''));
+        }
+        return res;
+      })();
+      const [res] = await Promise.all([eventTask, speakTask]);
+      // Wait for the queued audio to finish, unless interrupted.
+      while (turn === t && audio().currentTime < t.pl.end) await sleep(80);
+      if (turn !== t) return;
+      lastSpoken = t.text;
+      history.push({ role: 'assistant', content: t.text || res.text });
+      turn = null;
+      setState(mic ? 'listening' : 'off');
+      const next = pending.shift();
+      if (next) runTurn(ew, next);
+    } catch (err) {
+      if (err?.name !== 'AbortError' && turn === t) {
+        console.error(err);
+        note(`⚠ ${err.message}`);
+        turn = null;
+        setState(mic ? 'listening' : 'off');
+      }
     }
   }
-  let m = null;
-  let lvlRaf;
-  $('#typed').addEventListener('keydown', async (e) => {
-    if (e.key !== 'Enter' || !e.target.value.trim() || busy) return;
-    const text = e.target.value.trim();
-    e.target.value = '';
-    bubble('you', text);
-    try {
-      await answer(await lib, text);
-    } catch (err) {
-      $('#pst').textContent = err.message;
+
+  // Echo guard: text that mostly repeats what the assistant just said is its own voice coming back.
+  const overlap = (a, b) => {
+    const wa = new Set(a.toLowerCase().match(/[a-z0-9']+/g) ?? []);
+    const wb = new Set(b.toLowerCase().match(/[a-z0-9']+/g) ?? []);
+    if (!wa.size) return 0;
+    let n = 0;
+    for (const w of wa) if (wb.has(w)) n++;
+    return n / wa.size;
+  };
+
+  async function handleUtterance(ew, audioIn) {
+    const sttId = await ensure(ew, 'stt');
+    const prev = state;
+    if (!busy()) setState('transcribing');
+    dbg('utterance', (audioIn.length / 16000).toFixed(2), 's');
+    const { text } = await ew.generate({ model: sttId, input: audioIn, onProgress: loaderFor('stt', sttId) });
+    dbg('heard', text);
+    const said = text.trim();
+    if (!said) return !busy() && setState('listening');
+    const echoOf = turn?.text || lastSpoken;
+    if (!r.phones.checked && echoOf && overlap(said, echoOf) > 0.6) {
+      note(`ignored echo: “${short(said, 60)}”`);
+      return !busy() && setState(prev === 'transcribing' ? 'listening' : prev);
     }
-  });
-  $('#hang').addEventListener('click', () => {
-    m?.dispose();
-    m = null;
-    cancelAnimationFrame(lvlRaf);
-    $('#lvl').style.width = '0';
-    on('mic', false);
-    $('#hang').hidden = true;
-    $('#talk').hidden = false;
-    $('#pst').textContent = 'stopped';
-  });
-  $('#talk').addEventListener('click', async () => {
-    const ew = await lib;
-    $('#talk').hidden = true;
-    $('#hang').hidden = false;
+    bubble('you', said);
+    void runTurn(ew, said);
+  }
+
+  /* ---------- the loop ---------- */
+  let lvlRaf;
+  const levels = () => {
+    lvlRaf = requestAnimationFrame(levels);
+    let v = 0;
+    if (state === 'speaking' && audioCtx?.analyser) {
+      const d = new Uint8Array(64);
+      audioCtx.analyser.getByteFrequencyData(d);
+      v = d.reduce((a, b) => a + b, 0) / d.length / 160;
+    } else if (mic) v = Math.min(1, mic.level * 4);
+    r.orb.style.setProperty('--lvl', v.toFixed(3));
+  };
+  r.start.addEventListener('click', async () => {
+    r.start.hidden = true;
+    r.stop.hidden = false;
+    setState('loading', 'Downloading once, then cached.');
     try {
-      $('#pst').textContent = 'loading the voice activity detector…';
-      m = await ew.mic({ vad: true });
-      on('mic', true);
-      $('#pst').textContent = 'listening… speak, then pause';
-      const lv = () => ((lvlRaf = requestAnimationFrame(lv)), m && ($('#lvl').style.width = `${Math.min(100, m.level * 300)}%`));
-      lv();
-      for await (const heard of m.utterances()) {
-        if (busy) continue;
-        on('stt', true);
-        const t1 = tracker('moonshine-tiny');
-        const { text } = await ew.generate({ model: 'moonshine-tiny', input: heard, onProgress: t1.onProgress });
-        t1.done();
-        on('stt', false);
-        if (!text.trim()) continue;
-        bubble('you', text);
-        await answer(ew, text);
-        $('#pst').textContent = 'listening…';
+      const ew = await lib;
+      audio(); // unlock audio playback inside the click
+      for (const n of NODES) await ensure(ew, n.k);
+      const vad = Object.fromEntries($$('[data-v]', root).map((el) => [el.dataset.v, +el.value]));
+      const proc = Object.fromEntries($$('[data-a]', root).map((el) => [el.dataset.a, el.checked]));
+      mic = await ew.mic({
+        ...proc,
+        vad: {
+          ...vad,
+          negativeThreshold: Math.max(0.1, vad.positiveThreshold - 0.2),
+          // Barge-in is measured in audio time (32 ms VAD frames), not wall-clock time, so it still works
+          // when inference keeps the page busy and frames arrive in bursts.
+          onFrame: (p) => {
+            if (!busy() || !mic?.speaking) return void (speechRun = 0);
+            if (p >= vad.positiveThreshold) speechRun += 32;
+            else if (p < vad.positiveThreshold - 0.2) speechRun = 0;
+            const hold = r.phones.checked ? 32 : +r.hold.value;
+            if (speechRun >= hold) {
+              speechRun = 0;
+              dbg('barge-in');
+              interrupt();
+            }
+          },
+          onSpeechStart: () => {
+            speechRun = 0;
+            if (busy()) {
+              heardDuringReply = true;
+              r.ohint.textContent = 'hearing you…';
+            } else setState('hearing');
+          },
+          onSpeechEnd: () => {
+            // Speech during a reply that did not interrupt it was probably echo or noise: skip that utterance.
+            if (heardDuringReply && busy()) ignoreNext = true;
+            heardDuringReply = false;
+          },
+          onMisfire: () => {
+            heardDuringReply = false;
+            if (!busy() && state === 'hearing') setState('listening');
+          },
+        },
+      });
+      badge('vad', 'ready · listening', 'ok');
+      setState('listening');
+      levels();
+      for await (const heard of mic.utterances()) {
+        if (ignoreNext) {
+          ignoreNext = false;
+          continue;
+        }
+        handleUtterance(ew, heard).catch((e) => note(`⚠ ${e.message}`));
       }
     } catch (err) {
-      $('#pst').textContent = err.message;
-      $('#hang').click();
+      note(`⚠ ${err.message}`);
+      r.stop.click();
     }
   });
+  r.stop.addEventListener('click', () => {
+    interrupt('stopped');
+    mic?.dispose();
+    mic = null;
+    cancelAnimationFrame(lvlRaf);
+    r.orb.style.setProperty('--lvl', 0);
+    r.stop.hidden = true;
+    r.start.hidden = false;
+    setState('off');
+  });
+  r.tform.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = r.typed.value.trim();
+    if (!text) return;
+    r.typed.value = '';
+    bubble('you', text);
+    const ew = await lib;
+    runTurn(ew, text);
+  });
+  r.preview.addEventListener('click', async () => {
+    const ew = await lib;
+    badge('voice', 'loading…', 'busy');
+    const pl = player();
+    const name = r.voice.selectedOptions[0]?.textContent.split(' · ')[0] ?? 'your assistant';
+    const sp = ew.speak({ model: 'kokoro-82m', voice: r.voice.value, speed: +r.speed.value, input: `Hi, I'm ${name}. Talk over me whenever you like.`, onProgress: loaderFor('voice', 'kokoro-82m') });
+    for await (const c of sp) pl.push(c.samples, c.sampleRate);
+    badge('voice', 'ready', 'ok');
+  });
+
+  /* ---------- timers ---------- */
+  function startTimer(seconds, label) {
+    const id = Math.random().toString(36).slice(2);
+    const end = Date.now() + seconds * 1000;
+    const el = document.createElement('div');
+    el.className = 'timer';
+    r.timers.append(el);
+    r.timers.closest('details').open = true;
+    const tick = () => {
+      const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+      el.innerHTML = `⏱ <b>${esc(label)}</b> ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      if (left > 0) return;
+      clearInterval(timers.get(id));
+      timers.delete(id);
+      el.classList.add('done');
+      setTimeout(() => el.remove(), 8000);
+      lib.then((ew) => {
+        note(`⏱ ${label} is done`);
+        const msg = `(The ${label} timer you set just finished. Tell me in one short sentence.)`;
+        // Announce now, or right after the current reply.
+        if (!busy()) runTurn(ew, msg);
+        else pending.push(msg);
+      });
+    };
+    tick();
+    timers.set(id, setInterval(tick, 1000));
+  }
+  setState('off');
 })();
 
 /* =================================================================== models grid */

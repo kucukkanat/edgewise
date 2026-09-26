@@ -12,6 +12,12 @@ export interface MicOptions {
   deviceId?: string;
   /** Split speech into utterances with Silero VAD. */
   vad?: boolean | VadOptions;
+  /** Browser echo cancellation. Default true. With headphones, turning it off gives cleaner input. */
+  echoCancellation?: boolean;
+  /** Browser noise suppression. Default true. */
+  noiseSuppression?: boolean;
+  /** Browser automatic gain control. Default true. */
+  autoGainControl?: boolean;
 }
 
 export interface Mic extends AudioSource {
@@ -22,6 +28,10 @@ export interface Mic extends AudioSource {
   /** Current input level, 0 to 1. */
   readonly level: number;
   readonly recording: boolean;
+  /** With VAD, while utterances() is being read: true from the moment speech starts until its utterance ends. */
+  readonly speaking: boolean;
+  /** With VAD: the latest speech probability, 0 to 1. */
+  readonly speechProbability: number;
   /** Record a compressed copy with MediaRecorder. */
   toBlob(type?: string): Promise<Blob>;
   /** Release the microphone. */
@@ -63,10 +73,26 @@ class Queue<T> {
   }
 }
 
-/** Segment a stream of 16 kHz PCM chunks into utterances with Silero VAD. */
-async function* segmentStream(chunks: AsyncIterable<Float32Array>, o: VadOptions): AsyncGenerator<Float32Array> {
+interface VadState {
+  speaking: boolean;
+  prob: number;
+}
+
+/** Segment a stream of 16 kHz PCM chunks into utterances with Silero VAD, reporting speech start and end as they happen. */
+async function* segmentStream(
+  chunks: AsyncIterable<Float32Array>,
+  o: VadOptions,
+  state: VadState = { speaking: false, prob: 0 },
+): AsyncGenerator<Float32Array> {
   const vad = await createSileroStream(o.model);
   const seg = new VadSegmenter(o);
+  const safe = (fn: (() => void) | undefined) => {
+    try {
+      fn?.();
+    } catch {
+      // a throwing callback must not stop listening
+    }
+  };
   let carry = new Float32Array(0);
   for await (const chunk of chunks) {
     const buf = new Float32Array(carry.length + chunk.length);
@@ -75,13 +101,30 @@ async function* segmentStream(chunks: AsyncIterable<Float32Array>, o: VadOptions
     let i = 0;
     for (; i + FRAME <= buf.length; i += FRAME) {
       const f = buf.slice(i, i + FRAME);
-      const ev = seg.push(f, await vad.prob(f));
-      if (ev?.type === 'end') yield ev.audio;
+      const p = await vad.prob(f);
+      state.prob = p;
+      safe(() => o.onFrame?.(p));
+      const ev = seg.push(f, p);
+      if (ev?.type === 'start') {
+        state.speaking = true;
+        safe(o.onSpeechStart);
+      } else if (ev?.type === 'misfire') {
+        state.speaking = false;
+        safe(o.onMisfire);
+      } else if (ev?.type === 'end') {
+        state.speaking = false;
+        safe(() => o.onSpeechEnd?.(ev.audio));
+        yield ev.audio;
+      }
     }
     carry = buf.slice(i);
   }
   const last = seg.flush();
-  if (last?.type === 'end') yield last.audio;
+  state.speaking = false;
+  if (last?.type === 'end') {
+    safe(() => o.onSpeechEnd?.(last.audio));
+    yield last.audio;
+  } else if (last?.type === 'misfire') safe(o.onMisfire);
 }
 
 /**
@@ -117,7 +160,13 @@ export async function mic(options: MicOptions = {}): Promise<Mic> {
   let stream: MediaStream;
   try {
     stream = await md.getUserMedia({
-      audio: { deviceId: options.deviceId, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: {
+        deviceId: options.deviceId,
+        channelCount: 1,
+        echoCancellation: options.echoCancellation ?? true,
+        noiseSuppression: options.noiseSuppression ?? true,
+        autoGainControl: options.autoGainControl ?? true,
+      },
     });
   } catch (err) {
     throw new PermissionError('Microphone access was denied or is unavailable.', {
@@ -145,6 +194,7 @@ export async function mic(options: MicOptions = {}): Promise<Mic> {
     for (const l of listeners) l(d);
   };
   const vadOpts = options.vad === true ? {} : options.vad || null;
+  const vadState: VadState = { speaking: false, prob: 0 };
 
   const collect = () => {
     const n = recorded.reduce((a, b) => a + b.length, 0);
@@ -165,6 +215,12 @@ export async function mic(options: MicOptions = {}): Promise<Mic> {
     },
     get recording() {
       return recording;
+    },
+    get speaking() {
+      return vadState.speaking;
+    },
+    get speechProbability() {
+      return vadState.prob;
     },
     async start() {
       if (ctx.state === 'suspended') await ctx.resume();
@@ -211,7 +267,7 @@ export async function mic(options: MicOptions = {}): Promise<Mic> {
         }
         return clips();
       }
-      return segmentStream(chunks, vadOpts);
+      return segmentStream(chunks, vadOpts, vadState);
     },
     dispose() {
       for (const h of disposeHooks.splice(0)) h();

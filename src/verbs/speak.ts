@@ -3,7 +3,7 @@ import { KOKORO_VOICES, kokoroSentence, type VoiceInfo, type VoiceMix, voiceVect
 import { splitSentences } from '../backends/kokoro-text.ts';
 import { mockSpeak } from '../backends/mock.ts';
 import { getConfig } from '../core/config.ts';
-import { ConfigError, UnsupportedDeviceError, UnsupportedInputError } from '../core/errors.ts';
+import { AbortError, ConfigError, UnsupportedDeviceError, UnsupportedInputError } from '../core/errors.ts';
 import type { AudioLike } from '../core/parts.ts';
 import { registry, resolveManifest } from '../core/registry.ts';
 import { Run, type RunContext } from '../core/run.ts';
@@ -80,7 +80,9 @@ function makeAudio(samples: Float32Array, sampleRate: number, info: RunInfo): Sp
   };
 }
 
-/** A speak() run. `play()` starts playback with the first sentence, before synthesis finishes. */
+let sharedCtx: AudioContext | undefined;
+
+/** A speak() run. `play()` starts playback with the first sentence, before synthesis finishes. Cancel the run to stop playback at once. */
 export class SpeakRun extends Run<SpeechAudio, SpeechChunk> {
   /** Stream to the speakers (browser only). Resolves with the full audio when playback ends. */
   async play(): Promise<SpeechAudio> {
@@ -90,7 +92,9 @@ export class SpeakRun extends Run<SpeechAudio, SpeechChunk> {
         hint: 'Await the run and write audio.toWav() to a file instead.',
       });
     }
-    const ctx = new Ctx();
+    // One context for every playback: browsers limit how many can be open, and interruptions create many runs.
+    sharedCtx ??= new Ctx();
+    const ctx = sharedCtx;
     if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
     let at = ctx.currentTime + 0.05;
     const sources: AudioBufferSourceNode[] = [];
@@ -104,7 +108,9 @@ export class SpeakRun extends Run<SpeechAudio, SpeechChunk> {
       }
     };
     this.signal.addEventListener('abort', onAbort, { once: true });
+    const alreadyAborted = () => this.signal.aborted;
     for await (const chunk of this) {
+      if (alreadyAborted()) break;
       if (!chunk.samples.length) continue;
       const buf = ctx.createBuffer(1, chunk.samples.length, chunk.sampleRate);
       buf.copyToChannel(chunk.samples as Float32Array<ArrayBuffer>, 0);
@@ -117,10 +123,14 @@ export class SpeakRun extends Run<SpeechAudio, SpeechChunk> {
       sources.push(src);
     }
     const audio = await this;
+    // Wait for the queued audio, or stop at once if the run is cancelled meanwhile.
     const wait = Math.max(0, at - ctx.currentTime);
-    await new Promise((r) => setTimeout(r, wait * 1000 + 50));
+    await new Promise<void>((r) => {
+      const t = setTimeout(r, wait * 1000 + 50);
+      this.signal.addEventListener('abort', () => (clearTimeout(t), r()), { once: true });
+    });
     this.signal.removeEventListener('abort', onAbort);
-    await ctx.close().catch(() => {});
+    if (this.signal.aborted) throw new AbortError('Playback was interrupted.');
     return audio;
   }
 }

@@ -17,6 +17,14 @@ export interface VadOptions {
   preSpeechPadMs?: number;
   /** VAD model. Default 'vad:default'. */
   model?: string;
+  /** Called the moment speech starts, before the utterance is complete. Use it to interrupt playback. */
+  onSpeechStart?: () => void;
+  /** Called when an utterance ends, with its audio (16 kHz). */
+  onSpeechEnd?: (audio: Float32Array) => void;
+  /** Called when speech started but was too short to count (a cough, a click). */
+  onMisfire?: () => void;
+  /** Called for every 32 ms frame with the speech probability, 0 to 1. */
+  onFrame?: (probability: number) => void;
 }
 
 export const FRAME = 512;

@@ -14,6 +14,9 @@ order: 40
 - Browser network failures are reported as `DownloadError`.
 - `score()` answers are 0 to 1 as documented (they were the expected level index, 0 to n−1), so score thresholds behave as expected.
 - Transcribing less than 0.1 s of audio returns empty text instead of an ONNX Runtime error.
+- Barge-in: VAD callbacks `onSpeechStart`, `onSpeechEnd`, `onMisfire` and `onFrame`, plus `mic.speaking` and `mic.speechProbability`.
+- `mic({ echoCancellation, noiseSuppression, autoGainControl })` (all default to true).
+- `speak().play()` shares one AudioContext and stops at once when the run is cancelled, rejecting with `AbortError`.
 - Cancelling is consistent: `cancel()`, an aborted `signal`, and leaving a `for await` loop early all reject the Run with `AbortError`.
 - Server downloads: concurrent callers share one download, one caller's abort no longer fails the others, and disk errors reject instead of crashing the process.
 - `cache.delete()` matches model repos and never removes saved voices or vector indexes.
