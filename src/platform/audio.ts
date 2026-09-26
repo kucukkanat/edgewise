@@ -88,7 +88,7 @@ export function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array
 
 /** Resample mono audio with linear interpolation (anti-aliased by a box filter when downsampling). */
 export function resample(samples: Float32Array, from: number, to: number): Float32Array {
-  if (from === to) return samples;
+  if (from === to || !samples.length) return samples;
   const ratio = from / to;
   const out = new Float32Array(Math.max(1, Math.floor(samples.length / ratio)));
   if (ratio > 1) {

@@ -979,31 +979,44 @@ for await (const heard of (await mic({ vad: true })).utterances()) {
         r.rt.innerHTML = `${(seconds / Math.max(0.01, took)).toFixed(1)}<small>×</small>`;
         return res.info;
       };
-      let recording = null;
-      r.hold.addEventListener('pointerdown', async () => {
-        if (r.hold.disabled || recording) return;
-        recording = (async () => {
-          const ew = await lib;
-          const m = await ew.mic();
+      // One microphone for the whole demo: opening a fresh one per press takes long enough
+      // (permission, AudioContext, worklet) that a short press used to record nothing.
+      let micP = null;
+      const getMic = () => (micP ??= lib.then((ew) => ew.mic()).catch((e) => ((micP = null), Promise.reject(e))));
+      let pressing = false;
+      let started = null;
+      r.hold.addEventListener('pointerdown', () => {
+        if (r.hold.disabled || pressing) return;
+        pressing = true;
+        r.st.textContent = 'opening the microphone…';
+        started = getMic().then(async (m) => {
+          if (!pressing) return null; // released before the microphone was ready
           await m.start();
           live = m;
           r.hold.classList.add('rec');
           r.st.textContent = 'listening… release to stop';
           return m;
-        })().catch((e) => {
+        });
+        started.catch((e) => {
+          pressing = false;
           r.st.textContent = `microphone unavailable: ${e.message}`;
-          recording = null;
         });
       });
       const release = async () => {
-        if (!recording) return;
-        const m = await recording;
-        recording = null;
+        if (!pressing) return;
+        pressing = false;
         r.hold.classList.remove('rec');
-        if (!m) return;
+        const m = await started.catch(() => null);
         live = null;
+        if (!m) {
+          r.st.textContent = 'hold the button while you speak';
+          return;
+        }
         const samples = await m.stop();
-        m.dispose();
+        if (samples.length < 16000 * 0.3) {
+          r.st.textContent = 'that was too short: hold the button while you speak';
+          return;
+        }
         runBtn(r.hold, r.st, async () => {
           const ew = await lib;
           const tr = tracker(pk.value);
@@ -1015,6 +1028,7 @@ for await (const heard of (await mic({ vad: true })).utterances()) {
         });
       };
       addEventListener('pointerup', release);
+      addEventListener('pointercancel', release);
       r.loop.addEventListener('click', () =>
         runBtn(r.loop, r.st, async () => {
           const ew = await lib;
@@ -1034,7 +1048,7 @@ for await (const heard of (await mic({ vad: true })).utterances()) {
           }
         }),
       );
-      return { cleanup: () => (cancelAnimationFrame(raf), removeEventListener('pointerup', release)) };
+      return { cleanup: () => (cancelAnimationFrame(raf), removeEventListener('pointerup', release), removeEventListener('pointercancel', release), micP?.then((m) => m.dispose()).catch(() => {})) };
     },
   },
 ];

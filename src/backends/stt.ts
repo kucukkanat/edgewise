@@ -43,6 +43,8 @@ export async function transcribeSamples(
   const t = await getTransformers();
   const loaded = await loadAsr(m, opts);
   const asr = loaded.value;
+  // Under 0.1 s there is nothing to transcribe, and the encoders' first convolution rejects such short input.
+  if (samples.length < 1600) return { text: '', segments: [], info: loaded.info, outputTokens: 0 };
   const whisper = !!m.config?.whisper;
   const call: Record<string, unknown> = {};
   if (whisper) {
