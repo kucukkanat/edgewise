@@ -1,7 +1,8 @@
 import { platform } from '#platform';
 import type { Platform } from '../platform/types.ts';
 import { debug, getConfig } from './config.ts';
-import { AbortError, UnsupportedDeviceError } from './errors.ts';
+import { AbortError, OutOfMemoryError, UnsupportedDeviceError } from './errors.ts';
+import { type Candidate, chooseCandidate, estimateMemory, resolveBudget, resolvePreferLowMemory } from './memory.ts';
 import { setRunnableCheck } from './registry.ts';
 import type { Capabilities, CommonOptions, Device, Dtype, LoadEvent, Manifest, Variant } from './types.ts';
 
@@ -29,7 +30,12 @@ async function builtinAI(): Promise<Capabilities['builtinAI']> {
 export function capabilities(): Promise<Capabilities> {
   capsPromise ??= (async () => {
     const [gpu, storage, ai] = await Promise.all([platform.detectGpu(), platform.storageEstimate(), builtinAI()]);
-    const mobile = platform.isBrowser && typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+    const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { maxTouchPoints?: number }) : undefined;
+    // iPadOS reports a Mac user agent; touch support tells them apart.
+    const mobile =
+      platform.isBrowser &&
+      !!nav &&
+      (/Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent) || (/Macintosh/.test(nav.userAgent) && (nav.maxTouchPoints ?? 0) > 1));
     const tier: Capabilities['tier'] = !gpu.webgpu || !gpu.hardware ? 'cpu' : mobile ? 'mobile' : gpu.shaderF16 && gpu.hardware ? 'gpu-high' : 'gpu';
     const caps: Capabilities = {
       runtime: platform.name,
@@ -42,6 +48,8 @@ export function capabilities(): Promise<Capabilities> {
       threads: platform.isBrowser ? platform.crossOriginIsolated() && typeof SharedArrayBuffer !== 'undefined' : true,
       builtinAI: ai,
       cores: platform.cores(),
+      mobile,
+      memory: platform.memory(),
       storage,
       tier,
     };
@@ -117,15 +125,16 @@ export async function selectVariant(m: Manifest, opts: Pick<CommonOptions, 'devi
       hint: browser ? 'Use a browser with WebGPU, or pick a model that runs on WASM.' : 'Run on a machine with a GPU.',
     });
   }
-  for (const device of wanted) {
-    if (opts.dtype) {
-      // A dtype override still has to use a variant that runs on this device.
-      const v = m.variants.find((x) => x.devices.includes(device) && (!x.shaderF16 || caps.shaderF16));
-      if (v) return { device, dtype: opts.dtype, variant: v };
-      continue;
-    }
-    const v = m.variants.find((x) => x.devices.includes(device) && (!x.shaderF16 || caps.shaderF16));
-    if (v) return { device, dtype: v.dtype, variant: v };
+  const candidates: Candidate[] = wanted.flatMap((device) =>
+    m.variants.filter((x) => x.devices.includes(device) && (!x.shaderF16 || caps.shaderF16)).map((variant) => ({ device, variant })),
+  );
+  const cfg = getConfig();
+  // An explicit device is the caller's choice; only 'auto' may trade speed for memory across devices.
+  const pick = chooseCandidate(candidates, resolveBudget(cfg, caps), dev === 'auto' && resolvePreferLowMemory(cfg, caps));
+  if (pick) {
+    if (pick !== candidates[0]) debug(`"${m.id}": chose ${pick.device} (${dtypeLabel(pick.variant.dtype)}) to save memory`);
+    // A dtype override still has to use a variant that runs on this device.
+    return { device: pick.device, dtype: opts.dtype ?? pick.variant.dtype, variant: pick.variant };
   }
   throw new UnsupportedDeviceError(`"${m.id}" has no variant for ${wanted.join(' or ')} on this device.`, {
     hint: `"${m.id}" runs on ${[...new Set(m.variants.flatMap((v) => v.devices))].join(', ')}.`,
@@ -140,9 +149,16 @@ interface Entry {
   value: Promise<unknown>;
   dispose?: (v: unknown) => Promise<void> | void;
   lastUsed: number;
+  /** Use order; timestamps can tie. */
+  seq: number;
+  device: Device;
+  dtype: string;
+  /** Estimated bytes in memory. */
+  bytes: number;
 }
 
 const loaded = new Map<string, Entry>();
+let seq = 0;
 
 export interface LoadContext {
   manifest: Manifest;
@@ -163,24 +179,55 @@ export async function loadCached<T>(
   const existing = loaded.get(key);
   if (existing) {
     existing.lastUsed = Date.now();
+    existing.seq = ++seq;
     return existing.value as Promise<T>;
   }
+  const bytes = estimateMemory(ctx.selection.variant, ctx.selection.device);
+  const budget = resolveBudget(getConfig(), await capabilities());
+  if (budget.strict && bytes > budget.bytes) {
+    throw new OutOfMemoryError(
+      `"${ctx.manifest.id}" needs about ${gb(bytes)} of memory on ${ctx.selection.device}, more than this device's ${gb(budget.bytes)} budget.`,
+      { hint: 'Pick a smaller model or dtype, try another device, or raise the limit with configure({ memoryBudget }).' },
+    );
+  }
+  // Free room before loading, so the old and new models are never in memory together.
+  await evict(budget.bytes - bytes, getConfig().maxLoadedModels - 1);
+  const again = loaded.get(key);
+  if (again) {
+    again.lastUsed = Date.now();
+    again.seq = ++seq;
+    return again.value as Promise<T>;
+  }
   const value = loader(ctx);
-  const entry: Entry = { key, id: ctx.manifest.id, value, dispose: dispose as Entry['dispose'], lastUsed: Date.now() };
+  const entry: Entry = {
+    key,
+    id: ctx.manifest.id,
+    value,
+    dispose: dispose as Entry['dispose'],
+    lastUsed: Date.now(),
+    seq: ++seq,
+    device: ctx.selection.device,
+    dtype: dtypeLabel(ctx.selection.dtype),
+    bytes,
+  };
   loaded.set(key, entry);
   value.then(
     () => ctx.progress({ type: 'ready', model: ctx.manifest.id, device: ctx.selection.device, dtype: dtypeLabel(ctx.selection.dtype) }),
     () => loaded.delete(key),
   );
-  await evict();
   return value;
 }
 
-async function evict(): Promise<void> {
-  const max = getConfig().maxLoadedModels;
-  if (loaded.size <= max) return;
-  const sorted = [...loaded.values()].sort((a, b) => a.lastUsed - b.lastUsed);
-  for (const e of sorted.slice(0, loaded.size - max)) {
+function gb(n: number): string {
+  return `${(n / 1e9).toFixed(1)} GB`;
+}
+
+/** Unload least recently used models until at most `maxCount` remain and they use at most `maxBytes`. */
+async function evict(maxBytes: number, maxCount: number): Promise<void> {
+  const total = () => [...loaded.values()].reduce((a, e) => a + e.bytes, 0);
+  const sorted = [...loaded.values()].sort((a, b) => a.seq - b.seq);
+  for (const e of sorted) {
+    if (loaded.size <= maxCount && total() <= maxBytes) return;
     loaded.delete(e.key);
     try {
       const v = await e.value;
@@ -188,7 +235,35 @@ async function evict(): Promise<void> {
     } catch {
       // failed loads have nothing to dispose
     }
-    debug('unloaded', e.key);
+    debug('unloaded', e.key, 'to make room');
+  }
+}
+
+export interface MemoryUsage {
+  /** Estimated bytes all loaded models use together. */
+  estimated: number;
+  /** The budget in effect, in bytes (`Infinity` when off), and whether it is strict. */
+  budget: number;
+  strict: boolean;
+  models: { id: string; device: Device; dtype: string; bytes: number; lastUsed: number }[];
+  /** Resident memory of the whole process on servers. `null` in browsers, which do not report it. */
+  measured: number | null;
+}
+
+/** Loaded models, their estimated memory and the budget. */
+export async function memoryUsage(): Promise<MemoryUsage> {
+  const budget = resolveBudget(getConfig(), await capabilities());
+  const models = [...loaded.values()].map((e) => ({ id: e.id, device: e.device, dtype: e.dtype, bytes: e.bytes, lastUsed: e.lastUsed }));
+  return { estimated: models.reduce((a, m) => a + m.bytes, 0), budget: budget.bytes, strict: budget.strict, models, measured: measuredMemory() };
+}
+
+function measuredMemory(): number | null {
+  if (platform.isBrowser) return null;
+  const proc = (globalThis as { process?: { memoryUsage?: () => { rss: number } } }).process;
+  try {
+    return proc?.memoryUsage?.().rss ?? null;
+  } catch {
+    return null;
   }
 }
 

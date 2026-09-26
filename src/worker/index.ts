@@ -35,6 +35,7 @@ import {
 import type { AudioSource, ImageLike, RawPixels } from '../core/parts.ts';
 import { registry } from '../core/registry.ts';
 import { Run, type RunContext, type RunEvent } from '../core/run.ts';
+import type { MemoryUsage } from '../core/runtime.ts';
 import type { Capabilities, LoadEvent, Manifest } from '../core/types.ts';
 import { isAsyncIterable } from '../core/util.ts';
 import * as ew from '../index.ts';
@@ -70,6 +71,7 @@ type Op =
   | 'preload'
   | 'unload'
   | 'capabilities'
+  | 'memoryUsage'
   | 'configure'
   | 'models';
 
@@ -131,6 +133,8 @@ export interface EdgewiseWorker {
   preload(models: string | string[], o?: { onProgress?: (e: LoadEvent) => void; allowPreview?: boolean }): Promise<void>;
   unload(id?: string): Promise<void>;
   capabilities(): Promise<Capabilities>;
+  /** memoryUsage() inside the worker. */
+  memoryUsage(): Promise<MemoryUsage>;
   /** Apply configure() inside the worker. */
   configure(options: Record<string, unknown>): Promise<void>;
   /** Model IDs registered in the worker. */
@@ -440,6 +444,9 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
     capabilities() {
       return call('capabilities', {});
     },
+    memoryUsage() {
+      return call('memoryUsage', {});
+    },
     async configure(options) {
       const fn = hasFunction(options);
       if (fn) {
@@ -690,6 +697,9 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
           break;
         case 'capabilities':
           result = await ew.capabilities();
+          break;
+        case 'memoryUsage':
+          result = await ew.memoryUsage();
           break;
         case 'configure':
           ew.configure(args as never);

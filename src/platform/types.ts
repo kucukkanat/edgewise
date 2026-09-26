@@ -42,6 +42,8 @@ export interface Platform {
   /** Play mono PCM. Browser only; resolves when playback ends. */
   playAudio(samples: Float32Array, sampleRate: number, signal?: AbortSignal): Promise<void>;
   cores(): number | null;
+  /** Device memory in bytes, when the platform tells. */
+  memory(): number | null;
   crossOriginIsolated(): boolean;
 }
 

@@ -8,6 +8,8 @@ import type { Manifest } from '../core/types.ts';
  * Chromium in this repository. Everything else is `preview` or `experimental`.
  */
 const MB = 1e6;
+/** `memory` values are measured in Chromium: resident memory the loaded model adds. */
+const GB = 1e9;
 const ALL = ['webgpu', 'wasm', 'cpu'] as const;
 const CPU = ['wasm', 'cpu'] as const;
 
@@ -26,7 +28,21 @@ export const builtinManifests: Manifest[] = [
     // The q4 export uses GatherBlockQuantized, which ONNX Runtime's WebAssembly build lacks.
     variants: [
       { dtype: 'q4', devices: ['webgpu', 'cpu'], bytes: 211 * MB },
-      { dtype: 'fp16', devices: ['wasm'], bytes: 476 * MB },
+      {
+        dtype: 'q4',
+        devices: ['wasm'],
+        bytes: 211 * MB,
+        files: {
+          bucket: 'kucukkanat/edgewise-models',
+          path: 'lfm2.5-230m/wasm-q4/v1',
+          names: ['model_q4.onnx', 'model_q4.onnx_data'],
+          sha256: {
+            'model_q4.onnx': '984dd5cc416aac277ef2f4ac943ee3431f89c111a00ac78cf7da63c60ce05091',
+            'model_q4.onnx_data': 'b51a4580a88a2cd0486032cfdaf8694b09359abca5a97df8deb0a314ea6e5b34',
+          },
+        },
+        memory: 0.85 * GB,
+      },
     ],
     params: '230M',
     license: 'lfm1.0',
@@ -44,8 +60,24 @@ export const builtinManifests: Manifest[] = [
     source: { repo: 'LiquidAI/LFM2.5-350M-ONNX', revision: 'd11593fd9eb408e322667926656598896c2d5ff9' },
     variants: [
       { dtype: 'q4f16', devices: ['webgpu'], shaderF16: true, bytes: 255 * MB },
-      { dtype: 'q4', devices: ['webgpu', 'cpu'], bytes: 294 * MB },
-      { dtype: 'fp16', devices: ['wasm'], bytes: 725 * MB },
+      { dtype: 'q4', devices: ['webgpu', 'cpu'], bytes: 294 * MB, memory: { webgpu: 1.1 * GB } },
+      // WebAssembly: the q4 export with its quantized embedding rewritten into standard ops (bit-identical),
+      // because ONNX Runtime Web's WASM build lacks GatherBlockQuantized. fp16 used ~3.2 GB; this ~0.65 GB.
+      {
+        dtype: 'q4',
+        devices: ['wasm'],
+        bytes: 294 * MB,
+        files: {
+          bucket: 'kucukkanat/edgewise-models',
+          path: 'lfm2.5-350m/wasm-q4/v1',
+          names: ['model_q4.onnx', 'model_q4.onnx_data'],
+          sha256: {
+            'model_q4.onnx': '2025d575d3a308d696474914b6d407514e8bcd50b2432240a51754f26fe2fb5f',
+            'model_q4.onnx_data': '71ec6ad38a4c463dcb3dba671d06a1d9861be3a23e51290d818b95c0b7d2a5db',
+          },
+        },
+        memory: 0.7 * GB,
+      },
     ],
     params: '350M',
     license: 'lfm1.0',
@@ -81,7 +113,7 @@ export const builtinManifests: Manifest[] = [
     source: { repo: 'onnx-community/Qwen3-0.6B-ONNX', revision: 'da1453100cf3ff33ef56d17983fc7a8648706db6' },
     variants: [
       { dtype: 'q4f16', devices: ['webgpu'], shaderF16: true, bytes: 570 * MB },
-      { dtype: 'q4', devices: all(), bytes: 919 * MB },
+      { dtype: 'q4', devices: all(), bytes: 919 * MB, memory: { wasm: 4.9 * GB } },
     ],
     params: '0.6B',
     license: 'apache-2.0',
@@ -99,7 +131,22 @@ export const builtinManifests: Manifest[] = [
     source: { repo: 'onnx-community/gemma-3-270m-it-ONNX', revision: '2dbbfdb1b59bd034eb959428c6a7da9dd7ea27f0' },
     variants: [
       { dtype: 'fp32', devices: ['webgpu'], bytes: 1140 * MB },
-      { dtype: 'q4', devices: cpu(), bytes: 323 * MB },
+      { dtype: 'q4', devices: ['cpu'], bytes: 323 * MB },
+      {
+        dtype: 'q4',
+        devices: ['wasm'],
+        bytes: 323 * MB,
+        files: {
+          bucket: 'kucukkanat/edgewise-models',
+          path: 'gemma-3-270m/wasm-q4/v1',
+          names: ['model_q4.onnx', 'model_q4.onnx_data'],
+          sha256: {
+            'model_q4.onnx': 'a605587a912bf8dce67aba48b9637baf060edd552998d779bd18f1d2abe38f15',
+            'model_q4.onnx_data': '25c4a14af32fc1011a90504076024b0e1f65f915e9690b44a5484200d2e20851',
+          },
+        },
+        memory: 1.1 * GB,
+      },
     ],
     params: '270M',
     license: 'gemma',
@@ -117,7 +164,7 @@ export const builtinManifests: Manifest[] = [
     source: { repo: 'onnx-community/functiongemma-270m-it-ONNX', revision: 'ba3c872ede162a5c4ab753f509b2260af5587143' },
     variants: [
       { dtype: 'q4f16', devices: ['webgpu'], shaderF16: true, bytes: 426 * MB },
-      { dtype: 'fp32', devices: all(), bytes: 1140 * MB },
+      { dtype: 'fp32', devices: all(), bytes: 1140 * MB, memory: { wasm: 4 * GB } },
     ],
     params: '270M',
     license: 'gemma',
@@ -223,8 +270,8 @@ export const builtinManifests: Manifest[] = [
     task: 'speech-to-text',
     source: { repo: 'onnx-community/moonshine-tiny-ONNX', revision: 'a6da1241cd305dcd64eab1edbd615f2bb9aabb95' },
     variants: [
-      { dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' }, devices: ['webgpu'], bytes: 76 * MB },
-      { dtype: 'q8', devices: cpu(), bytes: 28 * MB },
+      { dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' }, devices: ['webgpu'], bytes: 76 * MB, memory: 0.9 * GB },
+      { dtype: 'q8', devices: cpu(), bytes: 28 * MB, memory: { wasm: 0.4 * GB } },
     ],
     params: '27M',
     license: 'mit',
@@ -461,8 +508,8 @@ export const builtinManifests: Manifest[] = [
     task: 'kokoro',
     source: { repo: 'onnx-community/Kokoro-82M-v1.0-ONNX', revision: '1939ad2a8e416c0acfeecc08a694d14ef25f2231' },
     variants: [
-      { dtype: 'fp32', devices: ['webgpu'], bytes: 326 * MB },
-      { dtype: 'q8', devices: cpu(), bytes: 92 * MB },
+      { dtype: 'fp32', devices: ['webgpu'], bytes: 326 * MB, memory: 1.65 * GB },
+      { dtype: 'q8', devices: cpu(), bytes: 92 * MB, memory: { wasm: 0.45 * GB } },
     ],
     params: '82M',
     license: 'apache-2.0',
@@ -557,7 +604,7 @@ export const builtinManifests: Manifest[] = [
     accepts: ['audio'],
     task: 'silero-vad',
     source: { repo: 'onnx-community/silero-vad', revision: 'e71cae966052b992a7eca6b17738916ce0eca4ec' },
-    variants: [{ dtype: 'fp32', devices: cpu(), bytes: 2 * MB }],
+    variants: [{ dtype: 'fp32', devices: cpu(), bytes: 2 * MB, memory: { wasm: 0.1 * GB } }],
     params: '2M',
     license: 'mit',
     status: 'stable',

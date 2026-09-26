@@ -13,6 +13,7 @@ import { join } from 'node:path';
 const port = Number(process.env.PORT ?? 8787);
 const dir = process.env.HUB_PROXY_CACHE ?? join(process.cwd(), '.cache', 'hub-proxy');
 mkdirSync(dir, { recursive: true });
+
 const upstream: Record<string, string> = { hf: 'https://huggingface.co', cdn: 'https://cdn.jsdelivr.net' };
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-expose-headers': '*' };
 const inflight = new Map<string, Promise<boolean>>();
@@ -38,7 +39,14 @@ Bun.serve({
     const base = upstream[head];
     if (!base) return new Response('unknown upstream', { status: 404, headers: cors });
     const target = `${base}/${rest.join('/')}${u.search}`;
-    const file = join(dir, createHash('sha256').update(target).digest('hex').slice(0, 32));
+    let file = join(dir, createHash('sha256').update(target).digest('hex').slice(0, 32));
+    // HUB_LOCAL_BUCKETS serves bucket files from disk, to test exports before they are uploaded:
+    // /hf/buckets/<owner>/<name>/resolve/<path> → $HUB_LOCAL_BUCKETS/<owner>/<name>/<path>
+    const localRoot = process.env.HUB_LOCAL_BUCKETS;
+    if (localRoot && head === 'hf' && rest[0] === 'buckets' && rest[3] === 'resolve') {
+      const local = join(localRoot, rest[1], rest[2], ...rest.slice(4));
+      if (existsSync(local)) file = local;
+    }
     if (!existsSync(file)) {
       let p = inflight.get(file);
       if (!p) {

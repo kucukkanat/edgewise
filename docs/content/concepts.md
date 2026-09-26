@@ -79,4 +79,4 @@ defineModel({
 
 ## Memory
 
-Up to four models stay loaded (`configure({ maxLoadedModels })`). The least recently used one is released first. `unload(id?)` releases models yourself.
+Up to four models stay loaded (`configure({ maxLoadedModels })`), within a memory budget (`configure({ memoryBudget })`). The least recently used one is released first, before the next model loads. `unload(id?)` releases models yourself, and `memoryUsage()` shows what is loaded and how much memory it is expected to use. See [Performance](performance).

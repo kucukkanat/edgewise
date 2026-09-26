@@ -40,6 +40,17 @@ export interface Variant {
   bytes?: number;
   /** Requires the WebGPU `shader-f16` feature. */
   shaderF16?: boolean;
+  /**
+   * Measured memory in bytes once loaded, for all devices or per device. Without it Edgewise estimates
+   * from `bytes`, the dtype and the device. Used by the memory budget and low-memory variant choice.
+   */
+  memory?: number | Partial<Record<Device, number>>;
+  /**
+   * ONNX files for this variant that come from an Edgewise bucket instead of the model's repo, for example
+   * a re-export that runs on ONNX Runtime Web's WebAssembly build. Other files (config, tokenizer) still
+   * come from the repo.
+   */
+  files?: { bucket: string; path: string; names: string[] /** SHA-256 (hex) by file name, checked on download. */; sha256?: Record<string, string> };
 }
 
 export type ModelSource =
@@ -111,6 +122,13 @@ export interface Capabilities {
   threads: boolean;
   builtinAI: 'available' | 'downloadable' | 'unavailable';
   cores: number | null;
+  /** A phone or tablet browser. */
+  mobile: boolean;
+  /**
+   * Device memory in bytes, when known: `os.totalmem()` on servers, `navigator.deviceMemory` in Chromium
+   * browsers (rounded, and capped at 8 GiB), otherwise `null`.
+   */
+  memory: number | null;
   storage: { quota: number | null; usage: number | null };
   tier: 'gpu-high' | 'gpu' | 'mobile' | 'cpu';
 }

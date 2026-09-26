@@ -24,6 +24,12 @@ suite('generate · real models', () => {
     expect(r.text).toMatch(/Paris/i);
   });
 
+  it2(on(all, 'answers with gemma-3-270m (4-bit on WebAssembly too)'), async () => {
+    const r = await generate({ model: 'gemma-3-270m', input: 'What is the capital of France? Answer in one word.', maxTokens: 16 });
+    report('gemma-3-270m', r.info);
+    expect(r.text).toMatch(/Paris/i);
+  });
+
   it2(on(['bun', 'node'], 'answers with lfm2.5-1.2b (needs WebGPU in browsers)'), async () => {
     const r = await generate({ model: 'lfm2.5-1.2b', input: 'What is the capital of Italy? Answer in one word.', maxTokens: 12 });
     report('lfm2.5-1.2b', r.info);

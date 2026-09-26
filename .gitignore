@@ -9,3 +9,4 @@ coverage/
 .vitest-attachments/
 __screenshots__/
 .vitest/
+__pycache__/

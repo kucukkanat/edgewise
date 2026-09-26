@@ -8,6 +8,11 @@ order: 40
 
 ## 0.2.0
 
+- Less memory in WebAssembly browsers: `lfm2.5-350m`, `lfm2.5-230m` and `gemma-3-270m` run 4-bit there from re-exports in the Edgewise bucket (checked by SHA-256). `lfm2.5-350m` drops from about 3.2 GB to 0.7 GB, and `gemma-3-270m` now runs 4-bit on WebAssembly.
+- Memory budget: `configure({ memoryBudget })` (default `'auto'`) unloads least recently used models before loading a new one, and on phones throws `OutOfMemoryError` for a model that cannot fit instead of crashing the tab.
+- `configure({ preferLowMemory })` (default `'auto'`, on for phones) picks a variant on another device when it needs half the memory or less.
+- `memoryUsage()` reports loaded models, their estimated memory and the budget; `estimateMemory()` estimates a variant. Also on the worker API.
+- `capabilities()` reports `mobile` (iPads included) and `memory`.
 - Voice cloning: `speak({ voice: { reference, consent } })`, `cloneVoice()` and saved voices, with Chatterbox Turbo (`voice:clone`). Consent is required.
 - Worker mode: `edgewise/worker` runs every verb in a Web Worker with the same API, including streams, tools, schemas and microphone input.
 - Models Edgewise exports are all served from the `kucukkanat/edgewise-models` Hugging Face bucket.

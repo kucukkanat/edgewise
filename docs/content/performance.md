@@ -72,8 +72,8 @@ A common workaround is a service worker that adds the headers to every response,
 ## Model size and memory
 
 - **Pick the smallest model that does the job.** `text:tiny` (`lfm2.5-230m`) and `stt:tiny` (`moonshine-tiny`) start faster and use less memory than their larger siblings. For judging, routing and PII, `evaluate` with an encoder takes milliseconds and far less memory than a language model.
-- **Memory is larger than the download.** A model's weights are held in memory, often in a wider format than the file, plus the runtime's working memory. For example, in a WebAssembly browser tab `lfm2.5-350m` uses about 3 GB: its 4-bit exports use an operator ONNX Runtime Web's WebAssembly build lacks, so it runs from fp16 weights that are expanded to fp32. On WebGPU and on servers it runs 4-bit and uses much less.
-- **Phones are strict.** iOS closes a tab that uses too much memory, and Safari then shows "A problem repeatedly occurred". Prefer WebGPU there, keep to small models, run speech models (`moonshine-tiny`, `kokoro-82m`) on WebAssembly, and load only what the current screen needs.
+- **Memory is larger than the download.** A model's weights are held in memory, often in a wider format than the file, plus the runtime's working memory. In a WebAssembly browser tab, `lfm2.5-350m` uses about 0.7 GB (1.1 GB at peak while loading) from 4-bit weights. Edgewise hosts re-exports of `lfm2.5-350m`, `lfm2.5-230m` and `gemma-3-270m` for WebAssembly: the original 4-bit files use an operator ONNX Runtime Web's WebAssembly build lacks, and the fp16 fallback took about 3 GB.
+- **Phones are strict.** iOS closes a tab that uses too much memory, and Safari then shows "A problem repeatedly occurred". Prefer WebGPU there, keep to small models, and load only what the current screen needs. Edgewise's memory budget (below) does most of this for you.
 - **Unload what you are done with.** `unload(id)` frees a model, and `configure({ maxLoadedModels })` (default 4) caps how many stay loaded; the least recently used one is freed first.
 
 ```ts
@@ -82,6 +82,34 @@ import { configure, unload } from 'edgewise';
 configure({ maxLoadedModels: 2 });
 await unload('lfm2.5-vl-450m');
 ```
+
+### Memory budget
+
+Each model variant has a memory figure, measured for the common models and estimated from the download size for the rest. Before loading a model, Edgewise unloads least recently used models until the new one fits the budget, so two large models are never in memory together.
+
+| `memoryBudget` | Behaviour |
+| --- | --- |
+| `'auto'` (default) | Phones and devices with 4 GB or less: 2 GB (or 60% of memory), strict. Other browsers: 8 GB, or 60% of a smaller reported memory. Servers: 75% of memory. |
+| a number of bytes | A strict budget. |
+| `'off'` | No budget; only `maxLoadedModels` applies. |
+
+With a strict budget, a model that alone needs more throws `OutOfMemoryError` instead of crashing the tab. With `device: 'auto'`, a variant that does not fit is skipped for one that does.
+
+`preferLowMemory` (default `'auto'`: on for phones and devices with 4 GB or less) chooses a variant on another device when it needs at most half the memory. On a phone, `kokoro-82m` then runs on WebAssembly (about 0.45 GB) instead of WebGPU (about 1.65 GB), while language models stay on WebGPU, where they are much faster. An explicit `device` is always respected.
+
+```ts
+import { configure, memoryUsage } from 'edgewise';
+
+configure({ memoryBudget: 1.5e9, preferLowMemory: true });
+
+const u = await memoryUsage();
+u.estimated;  // bytes the loaded models use together (estimate)
+u.budget;     // the budget in effect
+u.models;     // [{ id, device, dtype, bytes, lastUsed }]
+u.measured;   // servers: resident memory of the process; browsers: null
+```
+
+The figures are estimates: runtimes share some memory between models, and hardware GPUs keep weights in their own memory. Treat the budget as a guard rail, not an exact limit.
 
 ## Loading
 

@@ -317,6 +317,9 @@ export const platform: Platform = {
   cores() {
     return os.availableParallelism?.() ?? os.cpus().length;
   },
+  memory() {
+    return os.totalmem();
+  },
   crossOriginIsolated() {
     return true;
   },

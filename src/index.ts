@@ -6,10 +6,11 @@
 export { type ConfigureOptions, configure, type EdgewiseConfig, type FallbackPolicy, getConfig } from './core/config.ts';
 export * from './core/errors.ts';
 export { cache, persist, preload, storage } from './core/lifecycle.ts';
+export { estimateMemory } from './core/memory.ts';
 export type { AudioLike, AudioSource, ImageLike, Input, InputItem, Message, Part, RawPixels } from './core/parts.ts';
 export { defineModel, type ListFilter, registry } from './core/registry.ts';
 export { Run, type RunEvent } from './core/run.ts';
-export { capabilities, loadedModels, unload } from './core/runtime.ts';
+export { capabilities, loadedModels, type MemoryUsage, memoryUsage, unload } from './core/runtime.ts';
 export type * from './core/types.ts';
 export { audioSource, type Mic, type MicOptions, mic, type VadOptions } from './inputs/mic.ts';
 export { type EmbedManyResult, type EmbedOptions, type EmbedResult, embed } from './verbs/embed.ts';

@@ -238,6 +238,10 @@ export const platform: Platform = {
   cores() {
     return navigator.hardwareConcurrency ?? null;
   },
+  memory() {
+    const gb = (navigator as { deviceMemory?: number }).deviceMemory;
+    return typeof gb === 'number' && gb > 0 ? gb * 2 ** 30 : null;
+  },
   crossOriginIsolated() {
     return !!(globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
   },

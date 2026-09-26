@@ -1,8 +1,8 @@
 import { debug, getConfig, onConfigChange } from '../core/config.ts';
-import { ConfigError, toEdgewiseError } from '../core/errors.ts';
+import { ConfigError, DownloadError, toEdgewiseError } from '../core/errors.ts';
 import { registry } from '../core/registry.ts';
 import { dtypeLabel, getPlatform, type LoadContext, loadCached, selectVariant } from '../core/runtime.ts';
-import type { CommonOptions, Device, LoadEvent, Manifest, RunInfo } from '../core/types.ts';
+import type { CommonOptions, Device, LoadEvent, Manifest, RunInfo, Variant } from '../core/types.ts';
 
 type TJS = typeof import('@huggingface/transformers');
 
@@ -38,9 +38,13 @@ function pinnedRevisions(): Map<string, string> {
   return out;
 }
 
+/** Repo → bucket files that replace its ONNX files while a variant with `files` is loading. */
+const redirects = new Map<string, NonNullable<Variant['files']>>();
+
 /**
  * Transformers.js requests a few metadata files at `main` even when a revision is given.
  * Rewrite those requests to the pinned commit so every byte comes from the pinned revision.
+ * ONNX files of a variant with `files` are fetched from its bucket instead.
  */
 function pinFetch(t: TJS): void {
   const env = t.env as unknown as { fetch: typeof fetch; __edgewisePinned?: boolean };
@@ -48,6 +52,15 @@ function pinFetch(t: TJS): void {
   const original = env.fetch;
   env.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
+    for (const [repo, f] of redirects) {
+      const r = new RegExp(`/${repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/resolve/[^/]+/(?:onnx/)?([^/?]+)`).exec(url);
+      if (r && f.names.includes(r[1])) {
+        const hub = getConfig().hub.replace(/\/$/, '');
+        const target = `${hub}/buckets/${f.bucket}/resolve/${f.path.replace(/\/$/, '')}/${r[1]}`;
+        const sha = f.sha256?.[r[1]];
+        return original(target, init).then((res) => (sha && res.ok ? verified(res, sha, target) : res));
+      }
+    }
     const m = /^(https?:\/\/[^/]+\/)(.+?)\/resolve\/main\//.exec(url);
     if (m) {
       const rev = pinnedRevisions().get(m[2]);
@@ -56,6 +69,49 @@ function pinFetch(t: TJS): void {
     return original(input as RequestInfo, init);
   }) as typeof fetch;
   env.__edgewisePinned = true;
+}
+
+/**
+ * Pass a response through unchanged, and fail its body at the end if the bytes do not match `sha256`.
+ * Transformers.js caches a file only after reading it whole, so a mismatch caches nothing.
+ */
+function verified(res: Response, sha256: string, url: string): Response {
+  const body = res.body;
+  if (!body) return res;
+  const length = Number(res.headers.get('content-length')) || 0;
+  let buf = new Uint8Array(length);
+  let n = 0;
+  const reader = body.getReader();
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf.subarray(0, n) as Uint8Array<ArrayBuffer>));
+        buf = new Uint8Array(0);
+        const got = [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
+        if (got !== sha256.toLowerCase()) {
+          controller.error(
+            new DownloadError(`Checksum mismatch for ${url}: expected ${sha256}, got ${got}.`, {
+              hint: 'The file changed or the download was corrupted. Try again, or report it.',
+            }),
+          );
+        } else controller.close();
+        return;
+      }
+      if (n + value.length > buf.length) {
+        const grown = new Uint8Array(Math.max(buf.length * 2, n + value.length));
+        grown.set(buf.subarray(0, n));
+        buf = grown;
+      }
+      buf.set(value, n);
+      n += value.length;
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(stream, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 /** Load Transformers.js once and point it at Edgewise's hub and cache. */
@@ -119,10 +175,15 @@ export async function loadTjs<T>(
       async () => {
         const { revision } = repoOf(m);
         debug(`loading ${m.id} on ${sel.device} (${dtypeLabel(sel.dtype)})`);
+        const { repo } = repoOf(m);
+        const files = sel.variant?.files;
+        if (files) redirects.set(repo, files);
         try {
           return await loader(t, { device: sel.device, dtype: sel.dtype, revision, progress_callback: progressCallback(m.id, emit) }, ctx);
         } catch (err) {
           throw toEdgewiseError(err, `Loading ${m.id}`);
+        } finally {
+          if (files) redirects.delete(repo);
         }
       },
       dispose,

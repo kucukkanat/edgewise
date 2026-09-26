@@ -19,6 +19,20 @@ export interface EdgewiseConfig {
   wasmPaths?: string;
   /** Maximum models kept loaded at once. Least recently used models are unloaded first. */
   maxLoadedModels: number;
+  /**
+   * Memory that loaded models may use together, in bytes. Before a load, least recently used models are
+   * unloaded until the new one fits. `'auto'` (default) picks a budget from the device: about 2 GB on
+   * phones and low-memory devices (where a model that alone exceeds it throws `OutOfMemoryError`), and a
+   * soft limit elsewhere. A number is a strict budget. `'off'` disables it. Sizes are estimates; see
+   * `memoryUsage()`.
+   */
+  memoryBudget: number | 'auto' | 'off';
+  /**
+   * With `device: 'auto'`, choose a variant on another device when it needs at most half the memory,
+   * for example speech models on WebAssembly instead of WebGPU. `'auto'` (default) turns it on for
+   * phones and devices with 4 GB of memory or less.
+   */
+  preferLowMemory: boolean | 'auto';
   fallback: Required<FallbackPolicy>;
   /** Only allow models whose licence is in this list. Empty means allow all. */
   licenses: string[];
@@ -37,6 +51,8 @@ const defaults = (): EdgewiseConfig => ({
   cacheDir: undefined,
   wasmPaths: undefined,
   maxLoadedModels: 4,
+  memoryBudget: 'auto',
+  preferLowMemory: 'auto',
   fallback: { onUnsupported: 'next-variant', onBackendError: 'cpu' },
   licenses: [],
   allowPreview: false,
@@ -55,6 +71,14 @@ export type ConfigureOptions = Partial<Omit<EdgewiseConfig, 'fallback'>> & { fal
 export function configure(options: ConfigureOptions): void {
   if (options.maxLoadedModels !== undefined && (!Number.isInteger(options.maxLoadedModels) || options.maxLoadedModels < 1)) {
     throw new ConfigError('maxLoadedModels must be a positive integer.');
+  }
+  const b = options.memoryBudget;
+  if (b !== undefined && b !== 'auto' && b !== 'off' && !(typeof b === 'number' && b > 0)) {
+    throw new ConfigError(`memoryBudget must be a positive number of bytes, 'auto' or 'off', got ${JSON.stringify(b)}.`);
+  }
+  const p = options.preferLowMemory;
+  if (p !== undefined && typeof p !== 'boolean' && p !== 'auto') {
+    throw new ConfigError(`preferLowMemory must be true, false or 'auto', got ${JSON.stringify(p)}.`);
   }
   if (options.hub !== undefined && !/^https?:\/\//.test(options.hub)) {
     throw new ConfigError(`hub must be an http(s) URL, got "${options.hub}".`);

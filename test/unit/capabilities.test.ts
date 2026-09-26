@@ -15,7 +15,7 @@ describe('capabilities', () => {
     const c = await capabilities();
     const sel = await selectVariant(registry.get('lfm2.5-350m'), { device: 'cpu' });
     expect(sel.device).toBe(typeof window !== 'undefined' ? 'wasm' : 'cpu');
-    expect(sel.dtype).toBe(typeof window !== 'undefined' ? 'fp16' : 'q4');
+    expect(sel.dtype).toBe('q4');
     if (!c.webgpu) expect((await selectVariant(registry.get('lfm2.5-350m'))).device).not.toBe('webgpu');
   });
 

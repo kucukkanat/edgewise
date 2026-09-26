@@ -27,6 +27,8 @@ The full reference, generated from the source with TypeDoc, is at **[API referen
 | `cacheDir` | `$EDGEWISE_CACHE` or `~/.cache/edgewise` | servers |
 | `wasmPaths` | jsDelivr | browsers: where ONNX Runtime loads `.wasm` from |
 | `maxLoadedModels` | 4 | models kept in memory |
+| `memoryBudget` | `'auto'` | bytes loaded models may use together, `'auto'` or `'off'` ([Performance](performance)) |
+| `preferLowMemory` | `'auto'` | trade speed for memory across devices; on for phones |
 | `allowPreview` | false | allow preview and experimental models |
 | `licenses` | `[]` (all) | licence allow-list |
 | `serverGpu` | `'auto'` | `'auto'`, `'off'` or `'force'` |
@@ -36,7 +38,7 @@ The full reference, generated from the source with TypeDoc, is at **[API referen
 ## Lifecycle
 
 ```ts
-import { cache, persist, preload, storage, unload, loadedModels } from 'edgewise';
+import { cache, persist, preload, storage, unload, loadedModels, memoryUsage } from 'edgewise';
 
 await preload(['text:default'], { onProgress });   // download and compile ahead of time
 await persist();                                 // browsers: ask to keep the cache when space is low
