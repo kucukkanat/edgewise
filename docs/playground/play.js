@@ -1176,93 +1176,260 @@ function drawNote(ctx) {
 function liveEval(r, fn) {
   let t;
   let armed = false;
-  r.in.addEventListener('input', () => {
+  const poke = () => {
     if (!armed) return;
     clearTimeout(t);
     t = setTimeout(async () => {
       try {
         const t0 = performance.now();
         await fn(false);
+        r.st.classList.remove('err');
         r.ms.innerHTML = `live · answered in <b>${Math.round(performance.now() - t0)} ms</b>`;
-      } catch {}
-    }, 260);
-  });
-  return () => {
-    armed = true;
-    r.ms.innerHTML = '<b>live</b> · edit the text: answers update as you type';
+      } catch (e) {
+        r.ms.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`;
+      }
+    }, 280);
   };
+  r.in.addEventListener('input', poke);
+  const arm = () => {
+    armed = true;
+    r.ms.innerHTML = '<b>live</b> · edit the text or the questions: answers update as you type';
+  };
+  arm.arm = arm;
+  arm.poke = poke;
+  return arm;
 }
 
 CASES.evaluate = [
   {
     id: 'triage',
-    title: 'Ticket triage',
-    sub: 'route · mood · urgency',
+    title: 'Ask anything',
+    sub: 'choice · score · boolean',
     render(panel, slot) {
-      const presets = ['My invoice from March charged me twice and I need the money back today.', "I can't log in since the update, the reset link never arrives!!", 'Love the new dashboard, great work team :)', 'Do you offer volume pricing if we upgrade 40 seats?'];
-      const lanes = { billing: 'billing, payments, invoices or refunds', tech: 'a technical problem or bug', account: 'login, password or account access', sales: 'buying, pricing or upgrading', feedback: 'praise or product feedback' };
+      // Question sets are fully editable: rename, retype, add or remove questions and their options.
+      const SETS = {
+        'Support desk': {
+          text: ['My invoice from March charged me twice and I need the money back today.', "I can't log in since the update, the reset link never arrives!!", 'Love the new dashboard, great work team :)', 'Do you offer volume pricing if we upgrade 40 seats?'],
+          qs: [
+            { name: 'lane', kind: 'choice', options: [['billing', 'billing, payments, invoices or refunds'], ['tech', 'a technical problem or bug'], ['account', 'login, password or account access'], ['sales', 'buying, pricing or upgrading'], ['feedback', 'praise or product feedback']] },
+            { name: 'mood', kind: 'score', levels: ['calm', 'annoyed', 'furious'] },
+            { name: 'urgent', kind: 'boolean', desc: 'is urgent and needs a reply today', threshold: 0.5 },
+          ],
+        },
+        Moderation: {
+          text: ['This referee is blind, worst match I have ever seen, total disgrace.', 'New study shows walking 30 minutes a day lowers blood pressure.', 'Buy cheap followers now!!! Click the link in my bio', 'The election debate tonight was surprisingly civil.'],
+          qs: [
+            { name: 'topic', kind: 'choice', options: [['sports', 'sports'], ['health', 'health or medicine'], ['politics', 'politics or elections'], ['tech', 'technology'], ['ads', 'advertising or spam']] },
+            { name: 'tone', kind: 'score', levels: ['negative', 'neutral', 'positive'] },
+            { name: 'spam', kind: 'boolean', desc: 'is spam or a scam', threshold: 0.5 },
+            { name: 'insult', kind: 'boolean', desc: 'insults or attacks someone', threshold: 0.5 },
+          ],
+        },
+        'Sales leads': {
+          text: ["We need 200 licences before the end of the quarter, can you send a quote?", "Just looking around, your competitor Acme seemed cheaper.", 'Our budget is tight but we might try the free tier.', 'Can we book a demo with our CTO next week?'],
+          qs: [
+            { name: 'stage', kind: 'choice', options: [['ready', 'ready to buy now'], ['evaluating', 'comparing options or asking for a demo'], ['browsing', 'just browsing or curious']] },
+            { name: 'budget', kind: 'score', levels: ['low', 'medium', 'high'] },
+            { name: 'competitor', kind: 'boolean', desc: 'mentions a competitor', threshold: 0.5 },
+          ],
+        },
+      };
+      let setName = 'Support desk';
+      let qs = structuredClone(SETS[setName].qs);
       const r = layout(
         panel,
-        `${header('Three questions, one pass, milliseconds', 'Small encoders answer typed questions about text without generating anything. After the first run, answers update live as you type.')}
-        <div class="field"><label>Support ticket</label><textarea data-r="in">${presets[0]}</textarea>${presetChips(presets)}</div>
+        `${header('Ask your own questions', 'Small encoders answer typed questions about text in milliseconds, with no generation. Edit the questions below: rename them, change the options, add a score or a yes/no. After the first run, answers update as you type or edit.')}
+        <div class="field"><label>Question set</label><div class="chips" data-r="sets">${Object.keys(SETS).map((k) => `<button class="chip${k === setName ? ' on' : ''}" data-set="${esc(k)}">${esc(k)}</button>`).join('')}</div></div>
+        <div class="field"><label>Text to judge</label><textarea data-r="in"></textarea><div class="chips" data-r="presets"></div></div>
+        <div class="field"><label>Questions</label><div class="qs" data-r="qs"></div>
+          <div class="row"><button class="chip" data-add="choice">+ choice</button><button class="chip" data-add="score">+ score</button><button class="chip" data-add="boolean">+ boolean</button></div></div>
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
-        <div class="row"><button class="run" data-r="run">Triage <small data-r="sz"></small></button></div>
+        <div class="row"><button class="run" data-r="run">Evaluate <small data-r="sz"></small></button></div>
         <div class="status" data-r="st"></div><div class="ms" data-r="ms"></div>`,
-        `<div class="lbl">Lane · choice()</div><div class="bars" data-r="lanes"></div>
-        <div class="lbl" style="margin-top:8px">Mood · score()</div><div><div class="moodbar"><i data-r="mood"></i></div><div class="moodlbl"><span>calm</span><span>annoyed</span><span>furious</span></div></div>
-        <div class="lbl" style="margin-top:8px">Urgent · boolean()</div><div><span class="badge" data-r="urgent">–</span></div>`,
+        `<div class="answers" data-r="ans"><div class="screen empty" data-empty="Answers appear here, one block per question." style="min-height:200px"></div></div>`,
       );
-      bars(r.lanes, Object.keys(lanes).map((k) => [k, 0]));
-      const pk = picker(ids((m) => m.verb === 'evaluate' && m.features.includes('choice')), 'nli-deberta-v3-xsmall', () => (sz(), code.refresh()));
+      const pk = picker(ids((m) => m.verb === 'evaluate' && m.features.includes('choice')), 'nli-deberta-v3-xsmall', () => (sz(), code.refresh(), live.poke()));
       r.pick.append(pk.el);
       const sz = () => (r.sz.textContent = sizeLabel(pk.value));
       sz();
-      wirePresets(r, presets, (p) => ((r.in.value = p), r.in.dispatchEvent(new Event('input'))));
+      const slug = (s) => String(s).trim().replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '') || 'q';
+
+      /* ---------- the editor ---------- */
+      const drawPresets = () => {
+        const set = SETS[setName];
+        r.presets.innerHTML = set.text.map((t, i) => `<button class="chip" data-i="${i}">${esc(short(t, 34))}</button>`).join('');
+      };
+      const drawQs = () => {
+        r.qs.innerHTML = qs
+          .map((q, i) => {
+            let body = '';
+            if (q.kind === 'choice')
+              body = `${q.options.map(([k, d], j) => `<div class="opt"><input type="text" class="k" data-q="${i}" data-o="${j}" data-f="k" value="${esc(k)}" aria-label="option key"><input type="text" data-q="${i}" data-o="${j}" data-f="d" value="${esc(d)}" aria-label="option description"><button class="x" data-q="${i}" data-rmopt="${j}" aria-label="remove option" ${q.options.length <= 2 ? 'disabled' : ''}>×</button></div>`).join('')}<button class="chip sm" data-q="${i}" data-addopt>+ option</button>`;
+            else if (q.kind === 'score')
+              body = `<input type="text" data-q="${i}" data-f="levels" value="${esc(q.levels.join(', '))}" aria-label="levels, low to high"><span class="hint2">levels from low to high, separated by commas (2 to 10)</span>`;
+            else
+              body = `<input type="text" data-q="${i}" data-f="desc" value="${esc(q.desc)}" aria-label="true when the text…"><div class="range"><span class="hint2">flag at</span><input type="range" min="0.05" max="0.95" step="0.05" data-q="${i}" data-f="threshold" value="${q.threshold}"><output>${Math.round(q.threshold * 100)}%</output></div>`;
+            return `<div class="qcard" data-kind="${q.kind}"><div class="qhead"><input type="text" class="qname" data-q="${i}" data-f="name" value="${esc(q.name)}" aria-label="question name"><select data-q="${i}" data-f="kind">${['choice', 'score', 'boolean'].map((k) => `<option${k === q.kind ? ' selected' : ''}>${k}</option>`).join('')}</select><button class="x" data-rmq="${i}" aria-label="remove question" ${qs.length <= 1 ? 'disabled' : ''}>×</button></div>${body}</div>`;
+          })
+          .join('');
+      };
+      const changed = (redraw = false) => {
+        if (redraw) drawQs();
+        code.refresh();
+        live.poke();
+      };
+      const convert = (q, kind) => {
+        if (kind === 'choice') return { name: q.name, kind, options: [['yes', q.desc ?? 'yes'], ['no', 'something else']] };
+        if (kind === 'score') return { name: q.name, kind, levels: ['low', 'medium', 'high'] };
+        return { name: q.name, kind, desc: q.kind === 'choice' ? q.options[0][1] : 'matches', threshold: 0.5 };
+      };
+      r.qs.addEventListener('input', (e) => {
+        const el = e.target;
+        const q = qs[+el.dataset.q];
+        if (!q) return;
+        const f = el.dataset.f;
+        if (f === 'name') q.name = el.value;
+        else if (f === 'k' || f === 'd') q.options[+el.dataset.o][f === 'k' ? 0 : 1] = el.value;
+        else if (f === 'levels') q.levels = el.value.split(',').map((s) => s.trim()).filter(Boolean);
+        else if (f === 'desc') q.desc = el.value;
+        else if (f === 'threshold') ((q.threshold = +el.value), (el.nextElementSibling.textContent = `${Math.round(q.threshold * 100)}%`));
+        changed();
+      });
+      r.qs.addEventListener('change', (e) => {
+        if (e.target.dataset.f !== 'kind') return;
+        const i = +e.target.dataset.q;
+        qs[i] = convert(qs[i], e.target.value);
+        changed(true);
+      });
+      r.qs.addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        const q = qs[+b.dataset.q];
+        if (b.dataset.rmq !== undefined) qs.splice(+b.dataset.rmq, 1);
+        else if (b.dataset.rmopt !== undefined) q.options.splice(+b.dataset.rmopt, 1);
+        else if (b.dataset.addopt !== undefined) q.options.push([`option${q.options.length + 1}`, 'describe it here']);
+        else return;
+        changed(true);
+      });
+      panel.querySelector('[data-add]').parentElement.addEventListener('click', (e) => {
+        const kind = e.target.dataset.add;
+        if (!kind) return;
+        const n = qs.length + 1;
+        qs.push(kind === 'choice' ? { name: `question${n}`, kind, options: [['a', 'first option'], ['b', 'second option']] } : kind === 'score' ? { name: `question${n}`, kind, levels: ['low', 'medium', 'high'] } : { name: `question${n}`, kind, desc: 'describe when this is true', threshold: 0.5 });
+        changed(true);
+      });
+      r.sets.addEventListener('click', (e) => {
+        const k = e.target.dataset.set;
+        if (!k) return;
+        setName = k;
+        qs = structuredClone(SETS[k].qs);
+        $$('.chip', r.sets).forEach((c) => c.classList.toggle('on', c.dataset.set === k));
+        r.in.value = SETS[k].text[0];
+        drawPresets();
+        drawQs();
+        r.ans.innerHTML = '<div class="screen empty" data-empty="Answers appear here, one block per question." style="min-height:200px"></div>';
+        changed();
+      });
+      r.presets.addEventListener('click', (e) => {
+        const b = e.target.closest('.chip');
+        if (b) ((r.in.value = SETS[setName].text[+b.dataset.i]), r.in.dispatchEvent(new Event('input')), code.refresh());
+      });
+
+      /* ---------- validation and code ---------- */
+      const valid = () => {
+        const names = qs.map((q) => slug(q.name));
+        if (new Set(names).size !== names.length) return 'Question names must be different.';
+        for (const q of qs) {
+          if (q.kind === 'choice') {
+            const keys = q.options.map(([k]) => slug(k));
+            if (q.options.length < 2) return `"${q.name}" needs at least two options.`;
+            if (new Set(keys).size !== keys.length) return `"${q.name}" has two options with the same key.`;
+            if (q.options.some(([, d]) => !d.trim())) return `Every option of "${q.name}" needs a description.`;
+          }
+          if (q.kind === 'score' && (q.levels.length < 2 || q.levels.length > 10)) return `"${q.name}" needs 2 to 10 levels.`;
+          if (q.kind === 'boolean' && !q.desc.trim()) return `"${q.name}" needs a description.`;
+        }
+        return null;
+      };
+      const q2 = (v) => `'${String(v).replace(/'/g, "\\'")}'`;
+      const qCode = (x) =>
+        x.kind === 'choice'
+          ? `choice({ ${x.options.map(([k, d]) => `${slug(k)}: ${q2(d)}`).join(', ')} })`
+          : x.kind === 'score'
+            ? `score([${x.levels.map((l) => q2(l)).join(', ')}])`
+            : `boolean({ true: ${q2(x.desc)}, threshold: ${x.threshold} })`;
       const code = codeDrawer(
         () => `import { boolean, choice, evaluate, score } from 'edgewise';
 
 const { answers } = await evaluate({
-  model: ${q(pk.value)},
-  state: ${q(short(r.in.value, 60))},
+  model: ${q2(pk.value)},
+  state: ${q2(short(r.in.value, 60))},
   questions: {
-    lane: choice({ billing: 'billing, payments, invoices or refunds', tech: 'a technical problem or bug', account: 'login, password or account access', sales: 'buying, pricing or upgrading', feedback: 'praise or product feedback' }),
-    mood: score(['calm', 'annoyed', 'furious']),
-    urgent: boolean({ true: 'is urgent and needs a reply today' }),
+${qs.map((x) => `    ${slug(x.name)}: ${qCode(x)},`).join('\n')}
   },
 });
-answers.lane.choice;         // 'billing'
-answers.urgent.probability;  // 0.91`,
+${qs.map((x) => `answers.${slug(x.name)}.${x.kind === 'choice' ? 'choice' : x.kind === 'score' ? 'level' : 'probability'};`).join('\n')}`,
       );
       slot.append(code);
-      const once = async (tr) => {
-        const ew = await lib;
-        const res = await ew.evaluate({
-          model: pk.value,
-          state: r.in.value,
-          questions: { lane: ew.choice(lanes), mood: ew.score(['calm', 'annoyed', 'furious']), urgent: ew.boolean({ true: 'is urgent and needs a reply today' }) },
-          allowPreview: true,
-          onProgress: tr?.onProgress,
+
+      /* ---------- running and rendering ---------- */
+      const build = (ew) =>
+        Object.fromEntries(
+          qs.map((x) => [
+            slug(x.name),
+            x.kind === 'choice' ? ew.choice(Object.fromEntries(x.options.map(([k, d]) => [slug(k), d]))) : x.kind === 'score' ? ew.score(x.levels) : ew.boolean({ true: x.desc, threshold: x.threshold }),
+          ]),
+        );
+      const render = (answers) => {
+        r.ans.innerHTML = qs
+          .map((x, i) => `<div class="ablock" data-i="${i}"><div class="lbl">${esc(slug(x.name))} · ${x.kind}()</div><div class="abody"></div></div>`)
+          .join('');
+        qs.forEach((x, i) => {
+          const a = answers[slug(x.name)];
+          const el = $(`.ablock[data-i="${i}"] .abody`, r.ans);
+          if (!a) return;
+          if (x.kind === 'choice') {
+            const div = document.createElement('div');
+            div.className = 'bars';
+            el.append(div);
+            bars(div, Object.entries(a.probabilities).sort((p, q) => q[1] - p[1]));
+          } else if (x.kind === 'score') {
+            const n = x.levels.length;
+            el.innerHTML = `<div class="moodbar"><i></i></div><div class="moodlbl">${x.levels.map((l) => `<span${l === a.level ? ' class="on"' : ''}>${esc(l)}</span>`).join('')}</div>`;
+            requestAnimationFrame(() => ($('.moodbar i', el).style.left = `${a.score * 100}%`));
+            void n;
+          } else {
+            const p = a.probability;
+            const hot = a.flagged ?? p >= x.threshold;
+            el.innerHTML = `<div class="row"><span class="badge ${hot ? 'hot' : 'cool'}">${hot ? '● yes' : '○ no'} · ${(p * 100).toFixed(0)}%</span><span class="ms">${esc(x.desc)} · flags at ${Math.round(x.threshold * 100)}%</span></div>`;
+          }
         });
-        bars(r.lanes, Object.entries(res.answers.lane.probabilities).sort((a, b) => b[1] - a[1]));
-        r.mood.style.left = `${res.answers.mood.score * 100}%`;
-        const p = res.answers.urgent.probability;
-        r.urgent.className = `badge ${p > 0.5 ? 'hot' : 'cool'}`;
-        r.urgent.textContent = `${p > 0.5 ? '⚡ urgent' : 'can wait'} · ${(p * 100).toFixed(0)}%`;
-        return res.info.lane ?? Object.values(res.info)[0];
       };
-      const arm = liveEval(r, () => once());
+      const once = async (tr) => {
+        const bad = valid();
+        if (bad) throw new Error(bad);
+        const ew = await lib;
+        const res = await ew.evaluate({ model: pk.value, state: r.in.value, questions: build(ew), allowPreview: true, onProgress: tr?.onProgress });
+        render(res.answers);
+        return Object.values(res.info)[0];
+      };
+      const live = liveEval(r, () => once());
       r.run.addEventListener('click', () =>
         runBtn(r.run, r.st, async () => {
           const tr = tracker(pk.value);
           try {
             const info = await once(tr);
-            arm();
+            live.arm();
             return info;
           } finally {
             tr.done();
           }
         }),
       );
+      r.in.value = SETS[setName].text[0];
+      drawPresets();
+      drawQs();
+      code.refresh();
     },
   },
   {
@@ -1280,6 +1447,7 @@ answers.urgent.probability;  // 0.91`,
         `${header('Find it before it leaks', 'Token classifiers return character spans with a type and score. Redact them before text goes to logs, analytics or another model.')}
         <div class="field"><label>Text</label><textarea data-r="in" rows="5">${presets[0]}</textarea>${presetChips(['Personal details', 'Medical + card', 'People and places'])}</div>
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
+        <div class="field"><label>Minimum confidence</label><div class="range"><input type="range" data-r="thr" min="0" max="0.95" step="0.05" value="0.3"><output data-r="thrv">30%</output></div></div>
         <div class="row"><button class="run" data-r="run">Scan <small data-r="sz"></small></button><label class="check"><input type="checkbox" data-r="mask"> Mask</label></div>
         <div class="status" data-r="st"></div><div class="ms" data-r="ms"></div>`,
         `<div class="screen empty" data-r="out" data-empty="Highlighted spans appear here."><div class="doc" data-r="doc"></div></div><div class="legend" data-r="legend"></div>`,
@@ -1298,11 +1466,13 @@ answers.urgent.probability;  // 0.91`,
         return (t) => (m.has(t) || m.set(t, palette[m.size % palette.length]), m.get(t));
       })();
       let last = [];
+      let raw = [];
+      const hidden = new Set();
       const render = () => {
         const text = r.in.value;
         let html = '';
         let i = 0;
-        last.forEach((s, k) => {
+        last.filter((s) => !hidden.has(s.type)).forEach((s, k) => {
           html += esc(text.slice(i, s.start));
           html += `<mark class="${r.mask.checked ? 'masked' : ''}" style="--m:${colorOf(s.type)};animation-delay:${k * 60}ms"><span class="mt">${esc(text.slice(s.start, s.end))}</span><sup>${esc(s.type)}</sup></mark>`;
           i = s.end;
@@ -1310,27 +1480,48 @@ answers.urgent.probability;  // 0.91`,
         r.doc.innerHTML = html + esc(text.slice(i));
         r.out.classList.remove('empty');
         const types = [...new Set(last.map((s) => s.type))];
-        r.legend.innerHTML = types.map((t) => `<span style="--m:${colorOf(t)}"><i></i>${esc(t)}</span>`).join('');
+        r.legend.innerHTML = types.length
+          ? `${types.map((t) => `<button class="ltype${hidden.has(t) ? ' off' : ''}" data-t="${esc(t)}" style="--m:${colorOf(t)}"><i></i>${esc(t)}</button>`).join('')}<span class="ms">click a type to ignore it</span>`
+          : '<span class="ms">nothing found above this confidence</span>';
       };
       r.mask.addEventListener('change', render);
+      r.legend.addEventListener('click', (e) => {
+        const b = e.target.closest('.ltype');
+        if (!b) return;
+        hidden.has(b.dataset.t) ? hidden.delete(b.dataset.t) : hidden.add(b.dataset.t);
+        render();
+        code.refresh();
+      });
+      r.thr.addEventListener('input', () => {
+        r.thrv.textContent = `${Math.round(r.thr.value * 100)}%`;
+        merge();
+        render();
+        code.refresh();
+      });
       const code = codeDrawer(
         () => `import { evaluate, spans } from 'edgewise';
 import { redact } from 'edgewise/helpers';
 
 const { answers } = await evaluate({ model: ${q(pk.value)}, state: text, questions: { pii: spans() } });
-answers.pii.spans; // [{ type, start, end, text, score }, …]
+const found = answers.pii.spans.filter((s) => s.score >= ${(+r.thr.value).toFixed(2)}${hidden.size ? ` && ![${[...hidden].map((t) => q(t)).join(', ')}].includes(s.type)` : ''});
 
 // or in one call:
-const safe = await redact(text, { model: ${q(pk.value)} }); // 'Hi, I am [FIRST_NAME]…'`,
+const safe = await redact(text, { model: ${q(pk.value)}, threshold: ${(+r.thr.value).toFixed(2)} }); // 'Hi, I am [FIRST_NAME]…'`,
       );
       slot.append(code);
       const once = async (tr) => {
         const ew = await lib;
         const res = await ew.evaluate({ model: pk.value, state: r.in.value, questions: { pii: ew.spans() }, allowPreview: true, onProgress: tr?.onProgress });
-        // Merge pieces of one entity (an IBAN split at spaces) and drop overlaps.
+        raw = res.answers.pii.spans;
+        merge();
+        render();
+        return res.info.pii ?? Object.values(res.info)[0];
+      };
+      // Merge pieces of one entity (an IBAN split at spaces), drop overlaps and low-confidence spans.
+      function merge() {
         const text = r.in.value;
         last = [];
-        for (const sp of [...res.answers.pii.spans].sort((a, b) => a.start - b.start)) {
+        for (const sp of [...raw].filter((x) => x.score >= +r.thr.value).sort((a, b) => a.start - b.start)) {
           const type = String(sp.type).split('.').pop().replace(/_/g, ' ').toUpperCase();
           let { start, end } = sp;
           // Snap to whole words: token classifiers sometimes tag only part of one.
@@ -1341,9 +1532,7 @@ const safe = await redact(text, { model: ${q(pk.value)} }); // 'Hi, I am [FIRST_
           if (prev && prev.type === type && gap.length <= 6 && /^[\w\s\-./]*$/.test(gap)) prev.end = Math.max(prev.end, end);
           else if (!prev || start >= prev.end) last.push({ start, end, type });
         }
-        render();
-        return res.info.pii ?? Object.values(res.info)[0];
-      };
+      }
       const arm = liveEval(r, () => once());
       r.run.addEventListener('click', () =>
         runBtn(r.run, r.st, async () => {
@@ -1375,6 +1564,7 @@ const safe = await redact(text, { model: ${q(pk.value)} }); // 'Hi, I am [FIRST_
         `${header('Screen prompts before your model sees them', 'A DeBERTa classifier flags jailbreaks and injected instructions in a few milliseconds. Gate tool use or user-supplied documents on it.')}
         <div class="field"><label>Incoming prompt</label><textarea data-r="in">${esc(presets[1].text)}</textarea>${presetChips(presets)}</div>
         <div class="field"><label>Model</label><div data-r="pick"></div></div>
+        <div class="field"><label>Block when the score reaches</label><div class="range"><input type="range" data-r="thr" min="0.05" max="0.95" step="0.05" value="0.5"><output data-r="thrv">50%</output></div></div>
         <div class="row"><button class="run" data-r="run">Check <small data-r="sz"></small></button></div>
         <div class="status" data-r="st"></div><div class="ms" data-r="ms"></div>`,
         `<div class="gauge"><svg viewBox="0 0 340 190"><defs><linearGradient id="gg" x1="0" x2="1"><stop offset="0" stop-color="#3CE0C0"/><stop offset=".55" stop-color="#FFB547"/><stop offset="1" stop-color="#FF6B6B"/></linearGradient></defs>
@@ -1394,20 +1584,32 @@ const safe = await redact(text, { model: ${q(pk.value)} }); // 'Hi, I am [FIRST_
 const { answers } = await evaluate({
   model: ${q(pk.value)},
   state: userPrompt,
-  questions: { injection: boolean({ threshold: 0.5 }) },
+  questions: { injection: boolean({ threshold: ${(+r.thr.value).toFixed(2)} }) },
 });
 if (answers.injection.flagged) throw new Error('Blocked a prompt injection.');`,
       );
       slot.append(code);
+      let lastP = null;
+      const verdict = () => {
+        if (lastP === null) return;
+        const t = +r.thr.value;
+        r.verdict.className = `verdict ${lastP >= t ? 'bad' : 'ok'}`;
+        r.verdict.textContent = lastP >= t ? `⛔ blocked · ${Math.round(lastP * 100)}% ≥ ${Math.round(t * 100)}%` : `✓ allowed · ${Math.round(lastP * 100)}% < ${Math.round(t * 100)}%`;
+      };
+      r.thr.addEventListener('input', () => {
+        r.thrv.textContent = `${Math.round(r.thr.value * 100)}%`;
+        verdict();
+        code.refresh();
+      });
       const once = async (tr) => {
         const ew = await lib;
         const res = await ew.evaluate({ model: pk.value, state: r.in.value, questions: { injection: ew.boolean() }, allowPreview: true, onProgress: tr?.onProgress });
         const p = res.answers.injection.probability;
+        lastP = p;
         r.needle.style.transform = `rotate(${-90 + p * 180}deg)`;
         r.arc.style.strokeDashoffset = String(471 * (1 - p));
         r.val.textContent = `${Math.round(p * 100)}%`;
-        r.verdict.className = `verdict ${p > 0.5 ? 'bad' : 'ok'}`;
-        r.verdict.textContent = p > 0.5 ? '⛔ injection detected' : '✓ looks safe';
+        verdict();
         return res.info.injection ?? Object.values(res.info)[0];
       };
       const arm = liveEval(r, () => once());

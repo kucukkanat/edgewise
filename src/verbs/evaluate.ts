@@ -204,8 +204,9 @@ function mockAnswer(m: Manifest, name: string, q: Question, text: string): { ans
     return { answer: { choice: fellBack ? q.otherwise : keys[best], probabilities, fellBack }, confidence: confidenceOf(norm), info };
   }
   if (q.kind === 'score') {
+    // The expected level index, scaled to 0..1 as documented.
     const mean = norm.reduce((s, p, i) => s + p * i, 0);
-    return { answer: { score: mean, level: q.levels[Math.round(mean)], probabilities }, confidence: confidenceOf(norm), info };
+    return { answer: { score: mean / (norm.length - 1), level: q.levels[Math.round(mean)], probabilities }, confidence: confidenceOf(norm), info };
   }
   return { answer: { label: keys[best], probabilities }, confidence: confidenceOf(norm), info };
 }
@@ -257,7 +258,7 @@ async function answer(m: Manifest, q: Question, text: string, o: CommonOptions):
       const mean = probs.reduce((s, p, i) => s + p * i, 0);
       return {
         answer: {
-          score: mean,
+          score: mean / (probs.length - 1),
           level: q.levels[Math.round(mean)],
           probabilities: Object.fromEntries(q.levels.map((l, i) => [l, probs[i]])),
         },

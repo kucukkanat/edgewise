@@ -31,7 +31,8 @@ describe('evaluate (mock model)', () => {
     });
     expect(answers.team.choice).toBe('billing');
     expect(answers.team.probabilities.billing).toBeCloseTo(0.8);
-    expect(answers.severity.score).toBeCloseTo(0.3 + 1.2);
+    // Expected level index (0.3 × 1 + 0.6 × 2 = 1.5) scaled to 0..1 over three levels.
+    expect(answers.severity.score).toBeCloseTo((0.3 + 1.2) / 2);
     expect(answers.severity.level).toBe('high');
     expect(answers.refund.probability).toBeCloseTo(0.9);
     expect(answers.kind.label).toBe('question');

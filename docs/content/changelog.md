@@ -12,6 +12,8 @@ order: 40
 - Worker mode: `edgewise/worker` runs every verb in a Web Worker with the same API, including streams, tools, schemas and microphone input.
 - Models Edgewise exports are all served from the `kucukkanat/edgewise-models` Hugging Face bucket.
 - Browser network failures are reported as `DownloadError`.
+- `score()` answers are 0 to 1 as documented (they were the expected level index, 0 to n−1), so score thresholds behave as expected.
+- Transcribing less than 0.1 s of audio returns empty text instead of an ONNX Runtime error.
 - Cancelling is consistent: `cancel()`, an aborted `signal`, and leaving a `for await` loop early all reject the Run with `AbortError`.
 - Server downloads: concurrent callers share one download, one caller's abort no longer fails the others, and disk errors reject instead of crashing the process.
 - `cache.delete()` matches model repos and never removes saved voices or vector indexes.
