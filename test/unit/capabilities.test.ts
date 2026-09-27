@@ -30,4 +30,12 @@ describe('capabilities', () => {
     expect(isRunnable(registry.get('chrome:gemini-nano'), { ...c, runtime: 'node' })).toBe(false);
     expect(registry.list({ runnable: true }).length).toBeGreaterThan(5);
   });
+
+  it('does not count fp16 WebGPU models as runnable on GPUs without shader-f16', async () => {
+    const browserGpu = { ...(await capabilities()), runtime: 'browser' as const, webgpu: true, hardwareGpu: true };
+    expect(isRunnable(registry.get('sd-turbo'), { ...browserGpu, shaderF16: true })).toBe(true);
+    expect(isRunnable(registry.get('sd-turbo'), { ...browserGpu, shaderF16: false })).toBe(false);
+    // Models with a WebAssembly variant still run there.
+    expect(isRunnable(registry.get('lfm2.5-vl-450m'), { ...browserGpu, shaderF16: false })).toBe(true);
+  });
 });

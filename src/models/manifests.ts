@@ -200,7 +200,8 @@ export const builtinManifests: Manifest[] = [
     task: 'image-text-to-text',
     source: { repo: 'LiquidAI/LFM2.5-VL-450M-ONNX', revision: '95c283d4497a56477a83177079fa6b7121abb1b1' },
     variants: [
-      { dtype: { embed_tokens: 'fp16', vision_encoder: 'q4', decoder_model_merged: 'q4' }, devices: ['webgpu', 'cpu'], bytes: 675 * MB },
+      { dtype: { embed_tokens: 'fp16', vision_encoder: 'q4', decoder_model_merged: 'q4' }, devices: ['webgpu'], shaderF16: true, bytes: 675 * MB },
+      { dtype: { embed_tokens: 'fp16', vision_encoder: 'q4', decoder_model_merged: 'q4' }, devices: ['cpu'], bytes: 675 * MB },
       { dtype: { embed_tokens: 'fp16', vision_encoder: 'q4', decoder_model_merged: 'fp16' }, devices: ['wasm'], bytes: 919 * MB },
     ],
     params: '450M',
@@ -217,7 +218,10 @@ export const builtinManifests: Manifest[] = [
     accepts: ['text', 'image', 'video'],
     task: 'image-text-to-text',
     source: { repo: 'LiquidAI/LFM2.5-VL-1.6B-ONNX', revision: 'd0e00ca26cc42892d9f3c4380faa631927218209' },
-    variants: [{ dtype: { embed_tokens: 'fp16', embed_images: 'q4', decoder: 'q4' }, devices: ['webgpu', 'cpu'], bytes: 1755 * MB }],
+    variants: [
+      { dtype: { embed_tokens: 'fp16', embed_images: 'q4', decoder: 'q4' }, devices: ['webgpu'], shaderF16: true, bytes: 1755 * MB },
+      { dtype: { embed_tokens: 'fp16', embed_images: 'q4', decoder: 'q4' }, devices: ['cpu'], bytes: 1755 * MB },
+    ],
     params: '1.6B',
     license: 'lfm1.0',
     status: 'preview',
@@ -543,7 +547,10 @@ export const builtinManifests: Manifest[] = [
     accepts: ['text'],
     task: 'sd-turbo',
     source: { repo: 'schmuell/sd-turbo-ort-web', revision: 'ace89b7d2cd849f9a73914cdbb8a3ea60c853dd1' },
-    variants: [{ dtype: 'fp16', devices: ['webgpu', 'cpu'], bytes: 2582 * MB }],
+    variants: [
+      { dtype: 'fp16', devices: ['webgpu'], shaderF16: true, bytes: 2582 * MB },
+      { dtype: 'fp16', devices: ['cpu'], bytes: 2582 * MB },
+    ],
     params: '1B',
     license: 'stabilityai-community',
     status: 'preview',

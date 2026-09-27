@@ -76,7 +76,7 @@ export function isRunnable(m: Manifest, c: Capabilities): boolean {
   if (m.task === 'chrome-prompt') return c.builtinAI !== 'unavailable';
   if (m.requires?.webgpu && !c.webgpu) return false;
   const cpu: Device = c.runtime === 'browser' || c.runtime === 'worker' ? 'wasm' : 'cpu';
-  return m.variants.some((v) => v.devices.includes(cpu) || (c.webgpu && v.devices.includes('webgpu')));
+  return m.variants.some((v) => v.devices.includes(cpu) || (c.webgpu && v.devices.includes('webgpu') && (!v.shaderF16 || c.shaderF16)));
 }
 
 export interface Selection {

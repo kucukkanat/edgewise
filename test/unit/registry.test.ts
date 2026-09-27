@@ -1,6 +1,7 @@
 import { configure, resetConfig } from '../../src/core/config.ts';
 import { ConfigError, ModelNotFoundError, UnsupportedInputError, WrongVerbError } from '../../src/core/errors.ts';
 import { defineModel, registry, resolveManifest } from '../../src/core/registry.ts';
+import type { Variant } from '../../src/core/types.ts';
 
 afterEach(() => resetConfig());
 
@@ -43,6 +44,13 @@ describe('registry', () => {
       expect(m.variants.length).toBeGreaterThan(0);
       expect(m.accepts.length).toBeGreaterThan(0);
     }
+  });
+
+  // fp16 weights on WebGPU crash at run time on GPUs without shader-f16, so selectVariant must be able to skip them.
+  it('flags every WebGPU variant with fp16 weights as needing shader-f16', () => {
+    const f16 = (d: Variant['dtype']) => (typeof d === 'string' ? [d] : Object.values(d)).some((x) => /fp?16/.test(x));
+    const unflagged = registry.list().flatMap((m) => m.variants.filter((v) => v.devices.includes('webgpu') && f16(v.dtype) && !v.shaderF16).map(() => m.id));
+    expect(unflagged).toEqual([]);
   });
 
   it('filters by verb and accepted input', () => {

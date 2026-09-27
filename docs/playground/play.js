@@ -2864,6 +2864,7 @@ const png = await image.toBlob();`,
       ready.then(() => {
         const c = state.caps;
         if (!c.webgpu) ((r.gate.hidden = false), (r.gate.innerHTML = '<b>Needs WebGPU.</b> This browser has no WebGPU, so SD-Turbo cannot run here. Try a recent Chrome, Edge or Safari on a machine with a GPU.'), (r.run.disabled = true));
+        else if (!c.shaderF16) ((r.gate.hidden = false), (r.gate.innerHTML = '<b>Needs 16-bit GPU shaders.</b> SD-Turbo ships fp16 weights, and this GPU or driver does not offer WebGPU <code>shader-f16</code>, so it cannot run here. Try another browser or a newer GPU driver.'), (r.run.disabled = true));
         else if (!c.hardwareGpu) ((r.gate.hidden = false), (r.gate.innerHTML = '<b>Software GPU detected.</b> WebGPU here is emulated on the CPU, so painting will be very slow and may run out of memory.'));
       });
       let blob;
