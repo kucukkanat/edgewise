@@ -1,6 +1,6 @@
 name: Real-model tests
 
-# Downloads about 5 GB of models, so it runs weekly, on demand, and when the registry changes.
+# Downloads about 11 GB of models (d1-3b alone is 4.6 GB), so it runs weekly, on demand, and when the registry changes.
 on:
   workflow_dispatch:
   schedule:
@@ -20,6 +20,9 @@ jobs:
     env:
       EDGEWISE_CACHE: ${{ github.workspace }}/.cache/edgewise
     steps:
+      # The model cache and its tarball outgrow the runner's free disk; drop SDKs these tests never use.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
