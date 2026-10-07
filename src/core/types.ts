@@ -29,6 +29,7 @@ export type Task =
   | 'chronos-bolt'
   | 'silero-vad'
   | 'chrome-prompt'
+  | 'd1-decision'
   | 'mock';
 
 export interface Variant {

@@ -463,6 +463,47 @@ export const builtinManifests: Manifest[] = [
     },
     description: 'LFM2.5 PII detector: 40 entity types (contact, credential, financial, health and more) in 16 languages.',
   },
+  {
+    id: 'd1-omni-600m',
+    version: '1.0.0',
+    verb: 'evaluate',
+    accepts: ['text', 'image', 'audio'],
+    task: 'd1-decision',
+    source: { bucket: 'kucukkanat/edgewise-models', path: 'd1-omni-600m/v1' },
+    // 622 MB decision graph; the 108 MB vision and 168 MB audio encoders load on first use.
+    variants: [{ dtype: 'q8', devices: all(), bytes: 898 * MB }],
+    params: '587M',
+    license: 'lfm1.0',
+    status: 'preview',
+    features: ['choice', 'score', 'boolean'],
+    config: {
+      tokenizer: { repo: 'LiquidAI/d1-omni-600M', revision: '02b55d7076f15129e59ab3f94783f32c4b088674' },
+      files: {
+        decide: { q8: 'onnx/decide_q8.onnx' },
+        vision: { q8: 'onnx/vision_q8.onnx' },
+        audio: { q8: 'onnx/audio_q8.onnx' },
+      },
+      sha256: {
+        'onnx/decide_q8.onnx': 'cab4cd2f59989ca3df8845f0e03cc49294a8f6e06e1ce22d65e47c84e00e7256',
+        'onnx/vision_q8.onnx': '9ad9f58e3a64c23ae4f7f95ad40acd45ba1f79962937a4e0c0725144b1c514bb',
+        'onnx/audio_q8.onnx': '2bf3cf71459b61448c122cffa62a37e6a1db31b21135a7e699fb3752145cd2cd',
+      },
+      // config.json's per-type calibration temperatures; they apply to text-only questions.
+      temperatures: {
+        'choice:11+': 1.372515082359314,
+        'choice:2': 1.7465145587921143,
+        'choice:3-5': 1.3998981714248657,
+        'choice:6-10': 1.1751071214675903,
+        'noul:2': 1.6663223505020142,
+        'score:3-5': 1.7301132678985596,
+        'score:6-10': 1.0,
+      },
+      maxLength: 16384,
+      imageTextLength: 896,
+      audioTextLength: 15360,
+    },
+    description: 'LiquidAI d1 decision model: typed answers over text, images or speech in one pass, zero output tokens.',
+  },
   // ---------------------------------------------------------------- embed
   {
     id: 'all-minilm-l6-v2',
@@ -632,6 +673,7 @@ export const builtinAliases: Record<string, string> = {
   'judge:injection': 'prompt-injection-deberta-v3',
   'judge:entities': 'bert-base-ner',
   'judge:pii': 'lfm2.5-encoder-350m-pii',
+  'judge:omni': 'd1-omni-600m',
   'embed:default': 'embeddinggemma-300m',
   'embed:tiny': 'all-minilm-l6-v2',
   'voice:default': 'kokoro-82m',

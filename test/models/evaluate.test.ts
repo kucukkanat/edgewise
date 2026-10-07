@@ -1,6 +1,6 @@
 import { route } from '../../src/helpers/index.ts';
-import { boolean, choice, evaluate, score, spans } from '../../src/index.ts';
-import { it2, on, report, suite } from './setup.ts';
+import { boolean, choice, evaluate, score, spans, speak } from '../../src/index.ts';
+import { it2, on, redDisc, report, suite } from './setup.ts';
 
 const all = ['bun', 'node', 'browser'];
 
@@ -55,5 +55,63 @@ suite('evaluate · real models', () => {
     expect(found).toContain('laura@charite.de');
     expect(found).toMatch(/Laura|Schmidt/);
     for (const s of r.answers.pii.spans) expect(text.slice(s.start, s.end)).toBe(s.text);
+  });
+
+  it2(on(all, 'answers typed questions over text with d1-omni'), async () => {
+    const r = await evaluate({
+      model: 'd1-omni-600m',
+      state: 'I was charged twice for my order, please refund one of the payments.',
+      questions: {
+        refund: boolean({ instructions: 'Is the customer asking for a refund?' }),
+        lane: choice({ billing: 'payments and refunds', tech: 'bugs and crashes', chat: 'small talk' }, { instructions: 'Which team should handle this?' }),
+        urgency: score(['can wait', 'today', 'blocking the customer now'], { instructions: 'How urgent is this?' }),
+      },
+    });
+    report('d1 text', r);
+    expect(r.answers.refund.probability).toBeGreaterThan(0.8);
+    expect(r.answers.lane.choice).toBe('billing');
+    expect(r.answers.urgency.score).toBeGreaterThanOrEqual(0);
+    const ok = await evaluate({
+      model: 'd1-omni-600m',
+      state: { message: 'Thanks, the new settings page looks great!' },
+      questions: { refund: boolean({ instructions: 'Is the customer asking for a refund?' }) },
+    });
+    expect(ok.answers.refund.probability).toBeLessThan(0.2);
+  });
+
+  it2(on(all, 'answers questions about an image with d1-omni'), async () => {
+    const r = await evaluate({
+      model: 'd1-omni-600m',
+      images: redDisc(256),
+      questions: {
+        color: choice({ red: '', blue: '', green: '' }, { instructions: 'What color is the circle?' }),
+        shape: choice({ circle: '', square: '', triangle: '' }, { instructions: 'What shape is shown?' }),
+        round: boolean({ instructions: 'Is the shape round?' }),
+        dog: boolean({ instructions: 'Is there a dog in the image?' }),
+      },
+    });
+    report('d1 image', r);
+    expect(r.answers.color.choice).toBe('red');
+    expect(r.answers.shape.choice).toBe('circle');
+    expect(r.answers.round.probability).toBeGreaterThan(0.5);
+    expect(r.answers.dog.probability).toBeLessThan(0.1);
+  });
+
+  it2(on(all, 'answers questions about speech with d1-omni'), async () => {
+    const a = await speak({ model: 'kokoro-82m', voice: 'af_heart', input: 'Hi, I was charged twice for my order. Please refund one of the payments.' });
+    // The clip is the whole state. d1-omni's audio is a research preview: these two questions are ones the
+    // PyTorch original answers confidently for this clip; Edgewise must agree with it.
+    const r = await evaluate({
+      model: 'd1-omni-600m',
+      audio: a.samples,
+      sampleRate: a.sampleRate,
+      questions: {
+        kind: choice({ request: 'a request', greeting: 'a greeting only', joke: 'a joke' }, { instructions: 'What kind of utterance is this?' }),
+        topic: choice({ payments: '', weather: '', football: '' }, { instructions: 'What is the topic?' }),
+      },
+    });
+    report('d1 audio', r);
+    expect(r.answers.kind.choice).toBe('request');
+    expect(r.answers.topic.choice).toBe('payments');
   });
 });

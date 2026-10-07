@@ -31,7 +31,9 @@ describe('registry', () => {
   it('checks bucket-hosted files with a SHA-256', () => {
     for (const m of registry.list()) {
       if (!('bucket' in m.source)) continue;
-      const files = Object.values((m.config?.files ?? { f: m.config?.file }) as Record<string, string>);
+      // Files map dtype → path, or component → dtype → path (d1's decide, vision and audio graphs).
+      const leaves = (v: unknown): string[] => (typeof v === 'string' ? [v] : Object.values(v as object).flatMap(leaves));
+      const files = leaves(m.config?.files ?? { f: m.config?.file });
       const sums = m.config?.sha256 as Record<string, string>;
       for (const f of files) expect(sums[f]).toMatch(/^[0-9a-f]{64}$/);
     }

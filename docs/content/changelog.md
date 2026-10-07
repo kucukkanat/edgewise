@@ -6,6 +6,11 @@ order: 40
 
 # Changelog
 
+## Unreleased
+
+- `d1-omni-600m` (alias `judge:omni`, preview): LiquidAI's open decision model. It answers `choice()`, `score()` and `boolean()` questions over text, images or speech in one forward pass, with calibrated probabilities. Exported to ONNX by Edgewise (8-bit, checked against the PyTorch original).
+- `evaluate({ images, audio, sampleRate })` judges images or an audio clip. `state` is optional when the media are the whole state.
+
 ## 0.2.0
 
 - Less memory in WebAssembly browsers: `lfm2.5-350m`, `lfm2.5-230m` and `gemma-3-270m` run 4-bit there from re-exports in the Edgewise bucket (checked by SHA-256). `lfm2.5-350m` drops from about 3.2 GB to 0.7 GB, and `gemma-3-270m` now runs 4-bit on WebAssembly.
