@@ -97,7 +97,8 @@ type ToWorker =
   | { id: number; type: 'cancel' }
   | { id: number; type: 'tool-result'; call: number; output?: unknown; error?: string }
   | { id: number; type: 'approve-result'; call: number; ok: boolean }
-  | { type: 'stream'; stream: number; value?: unknown; done?: boolean; error?: string };
+  | { type: 'stream'; stream: number; value?: unknown; done?: boolean; error?: string }
+  | { type: 'close' };
 
 interface SerializedError {
   name: string;
@@ -115,6 +116,16 @@ interface Port {
 }
 
 const MARK = '__edgewise';
+
+const bun = (globalThis as { Bun?: { version: string; isMainThread: boolean; semver: { satisfies(v: string, range: string): boolean } } }).Bun;
+
+/**
+ * Bun before 1.4.0 panics ("NAPI FATAL ERROR: Error::New napi_create_error", exit 133) when it terminates a worker
+ * that loaded a native addon such as onnxruntime-node: terminate() leaves an exception pending, and the addon's
+ * finalizers then fail to create errors (https://github.com/oven-sh/bun/issues/30286, fixed by oven-sh/bun#30291).
+ * A worker that exits on its own is torn down safely, so there terminate() asks the worker to exit instead.
+ */
+const terminateCrashes = !!bun && bun.semver.satisfies(bun.version, '<1.4.0');
 
 /* ---------------------------------------------------------------- page side */
 
@@ -139,8 +150,8 @@ export interface EdgewiseWorker {
   configure(options: Record<string, unknown>): Promise<void>;
   /** Model IDs registered in the worker. */
   models(): Promise<string[]>;
-  /** Stop the worker. Pending runs reject with AbortError. */
-  terminate(): void;
+  /** Stop the worker. Pending runs reject with AbortError. Resolves once the worker has stopped. */
+  terminate(): Promise<void>;
 }
 
 const ERRORS: Record<string, new (message: string, o: never) => EdgewiseError> = {
@@ -253,6 +264,7 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
   let streamSeq = 0;
   const handlers = new Map<number, (m: ToMain) => void>();
   const pumps = new Map<number, () => void>();
+  let terminated = false;
   port.addEventListener('message', (e: MessageEvent) => {
     const m = e.data as ToMain;
     if (!m || typeof m !== 'object') return;
@@ -330,6 +342,12 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
       if (o.signal?.aborted) {
         stopStreams();
         reject(new AbortError(undefined, { cause: o.signal.reason }));
+        return;
+      }
+      // A call made before terminate() can reach this point after it (toWire is async); it would never settle.
+      if (terminated) {
+        stopStreams();
+        reject(new AbortError('The worker was terminated.'));
         return;
       }
       o.signal?.addEventListener('abort', onAbort, { once: true });
@@ -459,10 +477,16 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
     models() {
       return call('models', {});
     },
-    terminate() {
-      (worker as Worker).terminate?.();
+    async terminate() {
+      terminated = true;
       for (const [id, h] of handlers) h({ id, type: 'error', error: { name: 'AbortError', code: 'E_ABORT', message: 'The worker was terminated.' } });
       handlers.clear();
+      if (typeof (worker as Partial<Worker>).terminate !== 'function') return;
+      const w = worker as Worker;
+      if (!terminateCrashes) return w.terminate();
+      const closed = new Promise<void>((resolve) => w.addEventListener('close', () => resolve(), { once: true }));
+      port.postMessage({ type: 'close' } satisfies ToWorker);
+      await closed;
     },
   };
 }
@@ -732,6 +756,8 @@ export function serveWorker(scope: Port = globalThis as unknown as Port): void {
     if (m.type === 'stream') handleStream(m);
     else if (m.type === 'call') void run(m);
     else if (m.type === 'cancel') running.get(m.id)?.abort(new AbortError('Run cancelled.'));
+    // Sent by terminate() on Bun < 1.4 (see terminateCrashes); never exit a main thread serving over a MessagePort.
+    else if (m.type === 'close' && bun?.isMainThread === false) process.exit(0);
     else if (m.type === 'tool-result' || m.type === 'approve-result') {
       const key = `${m.id}:${m.type}:${m.call}`;
       pending.get(key)?.(m);

@@ -74,7 +74,9 @@ serveWorker();
 Bun supports Web Workers, so the same code works there. In Bun, load models either in the worker or on the main thread, not both: loading ONNX Runtime's native addon in two threads of one process crashes Bun 1.3. Node has no Web Worker API; `serveWorker(port)` and `connectWorker(port)` also accept any `MessagePort`, such as one from `worker_threads`.
 
 ```ts
-ew.terminate(); // stop the worker; pending runs reject with AbortError
+await ew.terminate(); // stop the worker; pending runs reject with AbortError
 ```
+
+On Bun before 1.4, terminating a worker that loaded ONNX Runtime's native addon crashed the whole process (`panic: NAPI FATAL ERROR: Error::New napi_create_error`, [oven-sh/bun#30286](https://github.com/oven-sh/bun/issues/30286)). There `terminate()` asks the worker to exit on its own, which is safe, and resolves once it has; a worker stuck in synchronous work exits when that work returns. Bun 1.4 and later, browsers and other runtimes terminate the worker directly.
 
 Errors keep their class across the boundary, so `err instanceof ModelNotFoundError` works as it does without a worker.
