@@ -149,7 +149,7 @@ interface Loaded {
 }
 
 // LFM2.5-VL-450M's tiling: up to ten 512 px tiles plus a thumbnail, 64 to 256 projected patches per crop.
-const IMAGE_PROCESSOR = {
+export const IMAGE_PROCESSOR = {
   do_resize: false,
   do_rescale: true,
   rescale_factor: 1 / 255,
@@ -172,7 +172,7 @@ const FEATURES = { feature_size: 128, sampling_rate: 16000, n_fft: 512, win_leng
 const MIN_SAMPLES = 8000;
 const MAX_SAMPLES = 30 * 16000;
 
-async function session(ort: OrtModule, bytes: Uint8Array | string, device: string): Promise<OrtSession> {
+export async function session(ort: OrtModule, bytes: Uint8Array | string, device: string): Promise<OrtSession> {
   const eps = device === 'webgpu' ? ['webgpu'] : getPlatform().isBrowser ? ['wasm'] : ['cpu'];
   return ort.InferenceSession.create(bytes, { executionProviders: eps });
 }

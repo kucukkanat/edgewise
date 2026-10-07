@@ -30,6 +30,7 @@ export type Task =
   | 'silero-vad'
   | 'chrome-prompt'
   | 'd1-decision'
+  | 'd1-causal'
   | 'mock';
 
 export interface Variant {
@@ -72,7 +73,8 @@ export interface Manifest {
   task: Task;
   source: ModelSource;
   variants: Variant[];
-  requires?: { webgpu?: boolean; browser?: boolean; crossOriginIsolated?: boolean };
+  /** `server`: runs on Bun or Node only, for models too large for a browser tab. */
+  requires?: { webgpu?: boolean; browser?: boolean; server?: boolean; crossOriginIsolated?: boolean };
   /** Human-readable parameter count, such as "350M". */
   params?: string;
   license: string;

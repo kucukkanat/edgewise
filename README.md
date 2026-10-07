@@ -66,7 +66,7 @@ bun run build           # dist/
 bun run docs          # docs/dist, the GitHub Pages site
 ```
 
-The ONNX export scripts for the models Edgewise hosts (Chronos-Bolt, the LiquidAI LFM2.5 encoders, LiquidAI d1-omni) are in `scripts/export`; the [bucket README](https://huggingface.co/buckets/kucukkanat/edgewise-models) lists each hosted file with its source, licence and parity.
+The ONNX export scripts for the models Edgewise hosts (Chronos-Bolt, the LiquidAI LFM2.5 encoders, LiquidAI d1-omni and d1-3B) are in `scripts/export`; the [bucket README](https://huggingface.co/buckets/kucukkanat/edgewise-models) lists each hosted file with its source, licence and parity.
 
 ## Licence
 

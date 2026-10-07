@@ -162,4 +162,35 @@ suite('evaluate · real models', () => {
     expect(results[0].answers.kind.truncated).toBeUndefined();
     expect(results[1].answers.kind.truncated).toBe(true);
   });
+
+  // d1-3B runs on servers only (requires.server): its decoder halves are too large for ONNX Runtime Web.
+  it2(on(['bun', 'node'], 'answers text and image questions with d1-3b'), async () => {
+    const { results } = await evaluate({
+      model: 'd1-3b',
+      items: [
+        { state: 'I was charged twice for my order, please refund one of the payments.' },
+        { state: { message: 'The app crashes when I open settings.' } },
+      ],
+      questions: {
+        refund: boolean({ instructions: 'Is the customer asking for a refund?' }),
+        lane: choice({ billing: 'payments and refunds', tech: 'bugs and crashes', chat: 'small talk' }, { instructions: 'Which team should handle this?' }),
+        urgency: score(['can wait', 'today', 'blocking the customer now'], { instructions: 'How urgent is this?' }),
+      },
+    });
+    report(
+      'd1-3b text',
+      results.map((r) => r.answers),
+    );
+    expect(results[0].answers.refund.probability).toBeGreaterThan(0.8);
+    expect(results[0].answers.lane.choice).toBe('billing');
+    expect(results[1].answers.refund.probability).toBeLessThan(0.2);
+    expect(results[1].answers.lane.choice).toBe('tech');
+    const img = await evaluate({
+      model: 'd1-3b',
+      images: redDisc(256),
+      questions: { shape: choice({ circle: '', square: '', triangle: '' }, { instructions: 'What shape is shown?' }) },
+    });
+    report('d1-3b image', img.answers);
+    expect(img.answers.shape.choice).toBe('circle');
+  });
 });

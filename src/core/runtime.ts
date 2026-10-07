@@ -73,6 +73,7 @@ setRunnableCheck((m) => {
 
 export function isRunnable(m: Manifest, c: Capabilities): boolean {
   if (m.requires?.browser && c.runtime !== 'browser' && c.runtime !== 'worker') return false;
+  if (m.requires?.server && (c.runtime === 'browser' || c.runtime === 'worker')) return false;
   if (m.task === 'chrome-prompt') return c.builtinAI !== 'unavailable';
   if (m.requires?.webgpu && !c.webgpu) return false;
   const cpu: Device = c.runtime === 'browser' || c.runtime === 'worker' ? 'wasm' : 'cpu';
@@ -100,6 +101,11 @@ export async function selectVariant(m: Manifest, opts: Pick<CommonOptions, 'devi
   const cpuDevice: Device = browser ? 'wasm' : 'cpu';
   if (m.requires?.browser && !browser) {
     throw new UnsupportedDeviceError(`"${m.id}" only runs in browsers.`, { hint: `Use another model on ${caps.runtime}.` });
+  }
+  if (m.requires?.server && browser) {
+    throw new UnsupportedDeviceError(`"${m.id}" runs on servers only (Bun or Node); it is too large for a browser tab.`, {
+      hint: (m.config?.browserAlternative as string | undefined) ? `Use "${m.config?.browserAlternative}" in browsers.` : 'Use a smaller model in browsers.',
+    });
   }
   let wanted: Device[];
   const dev = opts.device ?? 'auto';

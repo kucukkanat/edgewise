@@ -504,6 +504,44 @@ export const builtinManifests: Manifest[] = [
     },
     description: 'LiquidAI d1 decision model: typed answers over text, images or speech in one pass, zero output tokens.',
   },
+  {
+    id: 'd1-3b',
+    version: '1.0.0',
+    verb: 'evaluate',
+    accepts: ['text', 'image'],
+    task: 'd1-causal',
+    source: { bucket: 'kucukkanat/edgewise-models', path: 'd1-3b/v1' },
+    // 4.1 GB of decoder, plus a 484 MB vision graph loaded on first use. ONNX Runtime Web cannot allocate the
+    // 1.4 GB decoder halves in WebAssembly memory, so it runs on Bun and Node (CPU, or WebGPU through vgpu).
+    requires: { server: true },
+    variants: [{ dtype: 'q8', devices: ['webgpu', 'cpu'], bytes: 4570 * MB }],
+    params: '3.1B',
+    license: 'lfm1.0',
+    status: 'preview',
+    features: ['choice', 'score', 'boolean'],
+    config: {
+      tokenizer: { repo: 'LiquidAI/d1-3B', revision: '051bcc464b01b9f92942b364d9586b0ef5912432' },
+      files: {
+        // The embedding table stays full precision: ONNX Runtime quantizes Gather only at 4 bits, which moved
+        // answers ten times more than 8-bit everywhere else (scripts/export/README.md).
+        embed: { q8: 'onnx/embed.onnx' },
+        lower: { q8: 'onnx/lower_q8.onnx' },
+        upper: { q8: 'onnx/upper_q8.onnx' },
+        vision: { q8: 'onnx/vision_q8.onnx' },
+      },
+      sha256: {
+        'onnx/embed.onnx': 'c3629e51d56d6ddcf14add80a505fd0ca5573335b8048f83e5b457c7d8db2469',
+        'onnx/lower_q8.onnx': '0e945e1c3b509476252908d239c9047a551e324b7dff23876015826a7db73ae3',
+        'onnx/upper_q8.onnx': 'f4bf268a4c89ff5fa887677c3ad2d549ad6a3557b6e861ed2372d2eaff947f08',
+        'onnx/vision_q8.onnx': 'f8ad67db36cf7ac7ea416ec54b9b9d01d5a10cc12720fdcc688afd1bebe15ea4',
+      },
+      maxLength: 32768,
+      imageTokenId: 124907,
+      browserAlternative: 'd1-omni-600m',
+      hidden: 2048,
+    },
+    description: 'LiquidAI d1 decision model, 3B: the most accurate d1, over text and images, answered at the last token.',
+  },
   // ---------------------------------------------------------------- embed
   {
     id: 'all-minilm-l6-v2',
@@ -674,6 +712,7 @@ export const builtinAliases: Record<string, string> = {
   'judge:entities': 'bert-base-ner',
   'judge:pii': 'lfm2.5-encoder-350m-pii',
   'judge:omni': 'd1-omni-600m',
+  'judge:large': 'd1-3b',
   'embed:default': 'embeddinggemma-300m',
   'embed:tiny': 'all-minilm-l6-v2',
   'voice:default': 'kokoro-82m',

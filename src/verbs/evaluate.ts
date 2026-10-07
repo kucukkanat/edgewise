@@ -1,4 +1,5 @@
 import { type D1Question, d1Decide, pyJson } from '../backends/d1.ts';
+import { d1CausalDecide } from '../backends/d1causal.ts';
 import { classifyLabels, nliChoice, type RawSpan, tokenSpans } from '../backends/judge.ts';
 import { lfmRoute, lfmSpans } from '../backends/lfm.ts';
 import { toAudio, toRawImage } from '../backends/media.ts';
@@ -240,7 +241,7 @@ export async function evaluate<Q extends Record<string, Question>>(
   // d1 answers all of a model's questions over every item in as few passes as fit, sharing each item's media.
   const decided = new Map<string, Result>();
   const groups = new Map<string, [string, Question, Manifest][]>();
-  for (const r of resolved) if (r[2].task === 'd1-decision') groups.set(r[2].id, [...(groups.get(r[2].id) ?? []), r]);
+  for (const r of resolved) if (r[2].task === 'd1-decision' || r[2].task === 'd1-causal') groups.set(r[2].id, [...(groups.get(r[2].id) ?? []), r]);
   if (groups.size) {
     const t = media.includes('image') ? await getTransformers() : undefined;
     const decoded = await Promise.all(
@@ -253,8 +254,19 @@ export async function evaluate<Q extends Record<string, Question>>(
       checkSignal(options.signal);
       const m = group[0][2];
       const questions = group.map(([n, q]) => toD1(m, n, q));
-      const requests = items.map((p, i) => ({ state: d1State(p), questions, ...decoded[i] }));
-      const { answers, info } = await d1Decide(m, common, requests);
+      // d1-3B renders the state itself (JSON indented); d1-omni reads it serialized.
+      const { answers, info } =
+        m.task === 'd1-causal'
+          ? await d1CausalDecide(
+              m,
+              common,
+              items.map((p, i) => ({ state: p.hasState ? p.item.state : null, questions, images: decoded[i].images })),
+            )
+          : await d1Decide(
+              m,
+              common,
+              items.map((p, i) => ({ state: d1State(p), questions, ...decoded[i] })),
+            );
       answers.forEach((as, i) => {
         group.forEach(([name, q], k) => {
           decided.set(`${i}|${name}`, fromProbs(q, as[k].probs, info, as[k].truncated));

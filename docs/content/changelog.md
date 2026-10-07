@@ -6,9 +6,11 @@ order: 40
 
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - `d1-omni-600m` (alias `judge:omni`): LiquidAI's open decision model. It answers `choice()`, `score()` and `boolean()` questions over text, images or speech in one forward pass, with calibrated probabilities. Exported to ONNX by Edgewise (8-bit, checked against the PyTorch original). Stable: real-model tests pass on Bun, Node and Chromium.
+- `d1-3b` (alias `judge:large`, preview): LiquidAI's 3B d1, the most accurate decision model under 10B on its Decision Index, over text and images. About 4.6 GB, for Bun and Node. Exported to ONNX by Edgewise in four parts (embedding, two decoder halves, vision): 8-bit weights, full-precision embedding, within 0.005 of PyTorch.
+- `requires: { server: true }` marks models that run on Bun and Node only; browsers get an `UnsupportedDeviceError` before anything downloads.
 - `evaluate({ images, audio, sampleRate })` judges images or an audio clip. `state` is optional when the media are the whole state.
 - `evaluate({ items })` asks the same questions about many states and returns `{ results }`; d1 models batch them into as few passes as fit.
 - Answers carry `truncated: true` when a d1 model saw only part of the input.

@@ -1,3 +1,4 @@
+import { UnsupportedDeviceError } from '../../src/core/errors.ts';
 import { registry } from '../../src/core/registry.ts';
 import { capabilities, isRunnable, selectVariant } from '../../src/core/runtime.ts';
 
@@ -29,6 +30,22 @@ describe('capabilities', () => {
     expect(isRunnable(registry.get('embed:tiny'), c)).toBe(true);
     expect(isRunnable(registry.get('chrome:gemini-nano'), { ...c, runtime: 'node' })).toBe(false);
     expect(registry.list({ runnable: true }).length).toBeGreaterThan(5);
+  });
+
+  it('keeps server-only models out of browsers', async () => {
+    const c = await capabilities();
+    const browserGpu = { ...c, runtime: 'browser' as const, webgpu: true, hardwareGpu: true };
+    expect(isRunnable(registry.get('judge:large'), browserGpu)).toBe(false);
+    expect(isRunnable(registry.get('judge:large'), { ...browserGpu, runtime: 'worker' as const })).toBe(false);
+    expect(isRunnable(registry.get('judge:large'), { ...c, runtime: 'node' })).toBe(true);
+    if (typeof document !== 'undefined') {
+      // Fails before downloading anything, and names the browser model to use instead.
+      const err = await selectVariant(registry.get('judge:large')).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UnsupportedDeviceError);
+      expect((err as UnsupportedDeviceError).hint).toMatch(/d1-omni-600m/);
+    } else {
+      expect((await selectVariant(registry.get('judge:large'))).dtype).toBe('q8');
+    }
   });
 
   it('does not count fp16 WebGPU models as runnable on GPUs without shader-f16', async () => {

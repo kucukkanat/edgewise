@@ -59,6 +59,19 @@ One call takes images or audio, not both. The media are encoded once and every q
 
 d1-omni's audio understanding is a research preview from LiquidAI, trained on English requests to an assistant. It reliably tells what kind of utterance a clip is, but can miss what the speaker asks for. Check it on your own clips before you rely on it.
 
+## The larger d1
+
+`d1-3b` (alias `judge:large`) is LiquidAI's 3-billion-parameter d1, built on LFM2.5-VL-3B. It leads LiquidAI's Decision Index among models under 10B, and is stronger than `d1-omni-600m` on knowledge, retrieval and tool questions. It takes text and images, not audio, and downloads about 4.6 GB. It runs on Bun and Node (on the CPU, or the GPU through vgpu); browsers cannot allocate its decoder, so in a browser use `d1-omni-600m`. Questions and answers work as with `d1-omni-600m`; a boolean's `true` and `false` descriptions are shown to it as "Yes:" and "No:" lines.
+
+```ts
+const { answers } = await evaluate({
+  model: 'judge:large',
+  state: { ticket: 'Charged twice for order 1182', customer: 'pro plan' },
+  questions: { refund: boolean({ instructions: 'Is the customer asking for a refund?' }) },
+  allowPreview: true,
+});
+```
+
 ## Many items at once
 
 Pass `items` to ask the same questions about many states. Each item takes its own `state`, `images` or `audio`, and you get one result per item, in order. d1 models pack every question of every item into as few forward passes as fit, which is much faster than one call per item.
@@ -98,7 +111,7 @@ Edgewise picks the method from the model:
 - **The LFM2.5 prompt router** (`lfm2.5-encoder-350m-router`) embeds the text and each category description, and compares them. It is trained for routing and is multilingual.
 - **Classifiers** (`prompt-injection-deberta-v3`) have fixed labels. `boolean()` maps to the positive label; `label()` returns all of them.
 - **Token classifiers** (`bert-base-ner`, `lfm2.5-encoder-350m-pii`, `piiranha-v1`) answer `spans()`, with character offsets into your text.
-- **Decision models** (`d1-omni-600m`) read the state, the question's `instructions` and its options, and score each option from one forward pass. Text answers use d1's learned calibration temperatures. JSON state is sent as JSON, the format d1 was trained on. Without `instructions`, a choice asks "Which option fits best?", a score asks "Which level fits best?", and a boolean asks its `true` description.
+- **Decision models** (`d1-omni-600m`, `d1-3b`) read the state, the question's `instructions` and its options, and score each option from one forward pass. Text answers use d1's learned calibration temperatures. JSON state is sent as JSON, the format d1 was trained on. Without `instructions`, a choice asks "Which option fits best?", a score asks "Which level fits best?", and a boolean asks its `true` description.
 
 A question the model cannot answer throws `UnsupportedInputError` naming models that can.
 
@@ -116,6 +129,7 @@ Zero-shot probabilities are relative, not absolute. Before you gate on a thresho
 | `bert-base-ner` | spans | alias `judge:entities`; PER, ORG, LOC, MISC |
 | `lfm2.5-encoder-350m-pii` | spans | alias `judge:pii`; LiquidAI PII detector, fine-grained types |
 | `d1-omni-600m` | choice, score, boolean | alias `judge:omni`; LiquidAI decision model over text, images or speech, with calibrated probabilities. Audio is a research preview |
+| `d1-3b` | choice, score, boolean | alias `judge:large`; preview; the most accurate d1, over text and images. About 4.6 GB; Bun and Node only |
 | `piiranha-v1` | spans | preview; licence cc-by-nc-nd-4.0 (non-commercial) |
 
 For the full, current list see [Models](models).
