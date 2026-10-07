@@ -25,9 +25,14 @@ export async function mockStep(m: Manifest, input: StepInput): Promise<{ out: St
   };
 }
 
-export function mockEvaluate(m: Manifest, name: string, state: string): { value: Any; info: RunInfo } {
+export function mockEvaluate(
+  m: Manifest,
+  name: string,
+  state: string,
+  media: { images: unknown[]; audio?: unknown; sampleRate?: number } = { images: [] },
+): { value: Any; info: RunInfo } {
   const o = m.config?.mock as Any;
-  return { value: o.respond({ state })[name], info: info(m) };
+  return { value: o.respond({ state, ...media })[name], info: info(m) };
 }
 
 export function mockEmbed(m: Manifest, texts: string[]): { vectors: Float32Array[]; info: RunInfo } {

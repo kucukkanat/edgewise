@@ -40,7 +40,7 @@ import type { Capabilities, LoadEvent, Manifest } from '../core/types.ts';
 import { isAsyncIterable } from '../core/util.ts';
 import * as ew from '../index.ts';
 import type { EmbedManyOptions, EmbedManyResult, EmbedOneOptions, EmbedResult } from '../verbs/embed.ts';
-import type { EvaluateOptions, EvaluateResult, Question } from '../verbs/evaluate.ts';
+import type { EvaluateItem, EvaluateManyOptions, EvaluateManyResult, EvaluateOptions, EvaluateResult, Question } from '../verbs/evaluate.ts';
 import type { ForecastManyResult, ForecastOptions, ForecastResult, SeriesInput } from '../verbs/forecast.ts';
 import type { GenerateChunk, GenerateOptions, GenerateResult } from '../verbs/generate.ts';
 import { imageFromRgba, type PaintOptions, type PaintResult, type PaintStep } from '../verbs/paint.ts';
@@ -133,6 +133,7 @@ const terminateCrashes = !!bun && bun.semver.satisfies(bun.version, '<1.4.0');
 export interface EdgewiseWorker {
   generate<T = unknown>(options: GenerateOptions<T>): Run<GenerateResult<T>, GenerateChunk<T>>;
   evaluate<Q extends Record<string, Question>>(options: EvaluateOptions<Q>): Promise<EvaluateResult<Q>>;
+  evaluate<Q extends Record<string, Question>>(options: EvaluateManyOptions<Q>): Promise<EvaluateManyResult<Q>>;
   embed(options: EmbedOneOptions): Promise<EmbedResult>;
   embed(options: EmbedManyOptions): Promise<EmbedManyResult>;
   speak(options: SpeakOptions): SpeakRun;
@@ -221,6 +222,21 @@ async function pageImage(v: ImageLike): Promise<unknown> {
   return v;
 }
 
+/** Mono samples of an AudioBuffer (workers have no AudioBuffer). */
+function downmix(b: AudioBuffer): Float32Array {
+  const out = new Float32Array(b.length);
+  for (let c = 0; c < b.numberOfChannels; c++) {
+    const d = b.getChannelData(c);
+    for (let i = 0; i < d.length; i++) out[i] += d[i] / b.numberOfChannels;
+  }
+  return out;
+}
+
+/** evaluate() reads audio as samples plus sampleRate, so an AudioBuffer goes over in that form, not as a part. */
+function evaluateAudio<T extends EvaluateItem>(item: T): T {
+  return isDom(item.audio, 'AudioBuffer') ? { ...item, audio: downmix(item.audio as AudioBuffer), sampleRate: (item.audio as AudioBuffer).sampleRate } : item;
+}
+
 /** Page-side conversion: DOM media to pixels, URLs to markers, live sources to streams. */
 async function toWire(v: unknown, streams: (src: AsyncIterable<unknown>) => number, key?: string): Promise<unknown> {
   if (v === null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
@@ -233,15 +249,7 @@ async function toWire(v: unknown, streams: (src: AsyncIterable<unknown>) => numb
     }
     return pageImage(v as ImageLike);
   }
-  if (isDom(v, 'AudioBuffer')) {
-    const b = v as AudioBuffer;
-    const out = new Float32Array(b.length);
-    for (let c = 0; c < b.numberOfChannels; c++) {
-      const d = b.getChannelData(c);
-      for (let i = 0; i < d.length; i++) out[i] += d[i] / b.numberOfChannels;
-    }
-    return { [MARK]: 'pcm', samples: out, sampleRate: b.sampleRate };
-  }
+  if (isDom(v, 'AudioBuffer')) return { [MARK]: 'pcm', samples: downmix(v as AudioBuffer), sampleRate: (v as AudioBuffer).sampleRate };
   if ((v as AudioSource).kind === 'audio-source') {
     const s = v as AudioSource;
     return { [MARK]: 'source', stream: streams(s.utterances()), sampleRate: s.sampleRate };
@@ -410,8 +418,9 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
         return r;
       }, options.signal);
     },
-    evaluate(options) {
-      return call('evaluate', strip(options, 'signal', 'onProgress'), { signal: options.signal, onProgress: options.onProgress });
+    evaluate(options: EvaluateOptions<Record<string, Question>> | EvaluateManyOptions<Record<string, Question>>) {
+      const o = options.items ? { ...options, items: options.items.map(evaluateAudio) } : evaluateAudio(options);
+      return call('evaluate', strip(o, 'signal', 'onProgress'), { signal: options.signal, onProgress: options.onProgress }) as never;
     },
     embed(options: EmbedOneOptions | EmbedManyOptions) {
       return call(

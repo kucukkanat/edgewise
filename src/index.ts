@@ -14,7 +14,23 @@ export { capabilities, loadedModels, type MemoryUsage, memoryUsage, unload } fro
 export type * from './core/types.ts';
 export { audioSource, type Mic, type MicOptions, mic, type VadOptions } from './inputs/mic.ts';
 export { type EmbedManyResult, type EmbedOptions, type EmbedResult, embed } from './verbs/embed.ts';
-export { boolean, choice, type EvaluateOptions, type EvaluateResult, evaluate, label, type Question, type Span, score, spans } from './verbs/evaluate.ts';
+export {
+  type Answer,
+  type AnswerFlags,
+  boolean,
+  choice,
+  type EvaluateItem,
+  type EvaluateManyOptions,
+  type EvaluateManyResult,
+  type EvaluateOptions,
+  type EvaluateResult,
+  evaluate,
+  label,
+  type Question,
+  type Span,
+  score,
+  spans,
+} from './verbs/evaluate.ts';
 export { type ForecastManyResult, type ForecastOptions, type ForecastResult, forecast, type SeriesForecast, type SeriesInput } from './verbs/forecast.ts';
 export {
   type FlorencePreset,

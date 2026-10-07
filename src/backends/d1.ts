@@ -66,25 +66,30 @@ export function encodeQuestion(
   q: D1Question,
   maxLen: number,
   media: D1Media,
-): { ids: number[]; markers: number[] } {
+): { ids: number[]; markers: number[]; truncated: boolean } {
   const enc = (s: string) => tokenize(escapeDelimiters(s));
+  let truncated = false;
+  const cut = (xs: number[], n: number) => {
+    if (xs.length > n) truncated = true;
+    return xs.slice(0, n);
+  };
   const opts = renderOptions(q, media);
   const n = opts.length;
   const budget = Math.max(96, Math.min(n * 24 + 32, Math.floor(maxLen / 2)));
   const per = Math.max(2, Math.floor((budget - 3 * n) / n));
-  const question = [QUESTION, ...enc(q.instructions)].slice(0, Math.max(16, budget));
+  const question = cut([QUESTION, ...enc(q.instructions)], Math.max(16, budget));
   const markers: number[] = [];
   for (const text of opts) {
     markers.push(question.length + 1);
-    question.push(OPT, MASK, ...enc(` ${text}`).slice(0, per), OPT_END);
+    question.push(OPT, MASK, ...cut(enc(` ${text}`), per), OPT_END);
   }
   question.push(DECIDE);
   const room = Math.max(0, maxLen - question.length - 2);
-  const stateIds = [STATE, ...enc(state).slice(0, room)];
-  const ids = [BOS, ...stateIds, ...question].slice(0, maxLen);
+  const stateIds = [STATE, ...cut(enc(state), room)];
+  const ids = cut([BOS, ...stateIds, ...question], maxLen);
   const shifted = markers.map((m) => m + 1 + stateIds.length);
   if (shifted[shifted.length - 1] >= maxLen) throw new ConfigError('The options do not fit in the context.', { hint: 'Use fewer or shorter options.' });
-  return { ids, markers: shifted };
+  return { ids, markers: shifted, truncated };
 }
 
 /** The calibration temperature d1 learned for text questions of this type and option count. */
@@ -246,7 +251,7 @@ async function imagePrefix(m: Manifest, l: Loaded, images: RawImage[], opts: Com
 }
 
 /** 16 kHz mono samples → (P, 1024) prefix embeddings, one per 80 ms. */
-async function audioPrefix(m: Manifest, l: Loaded, samples: Float32Array, opts: CommonOptions): Promise<Float32Array> {
+async function audioPrefix(m: Manifest, l: Loaded, samples: Float32Array, opts: CommonOptions): Promise<{ prefix: Float32Array; truncated: boolean }> {
   const t = await getTransformers();
   let x = samples.subarray(0, MAX_SAMPLES);
   if (x.length < MIN_SAMPLES) {
@@ -264,7 +269,7 @@ async function audioPrefix(m: Manifest, l: Loaded, samples: Float32Array, opts: 
       length: new l.ort.Tensor('int64', BigInt64Array.of(BigInt(frames)), [1]),
     }),
   );
-  return (out.prefix.data as Float32Array).slice(0, subsampledLength(frames) * HIDDEN);
+  return { prefix: (out.prefix.data as Float32Array).slice(0, subsampledLength(frames) * HIDDEN), truncated: samples.length > MAX_SAMPLES };
 }
 
 export interface D1Request {
@@ -276,35 +281,63 @@ export interface D1Request {
   audio?: Float32Array;
 }
 
-/**
- * Each question's distribution over its options, in option order (a noul as [false, true]),
- * from one batched forward pass. Media are encoded once and shared by every question.
- */
-export async function d1Decide(m: Manifest, opts: CommonOptions, req: D1Request): Promise<{ probs: number[][]; info: RunInfo }> {
-  if (req.images?.length && req.audio) throw new UnsupportedInputError(`"${m.id}" takes images or audio in one call, not both.`);
-  const { value: l, info } = await loadD1(m, opts);
-  const c = m.config as unknown as D1Config;
-  const media: D1Media = req.images?.length ? 'image' : req.audio ? 'audio' : 'text';
-  const prefix =
-    media === 'image' && req.images
-      ? await imagePrefix(m, l, req.images, opts)
-      : media === 'audio' && req.audio
-        ? await audioPrefix(m, l, req.audio, opts)
-        : null;
-  const P = prefix ? prefix.length / HIDDEN : 0;
-  const maxLen = Math.min(media === 'image' ? c.imageTextLength : media === 'audio' ? c.audioTextLength : c.maxLength, c.maxLength - P);
-  if (maxLen < 64) {
-    throw new UnsupportedInputError(`The images take ${P} of the ${c.maxLength} positions.`, { hint: 'Send fewer or smaller images.' });
+export interface D1Answer {
+  /** The distribution over the question's options, in option order (a noul as [false, true]). */
+  probs: number[];
+  /** True when the model saw only part of the input: the state, instructions or an option cut to fit, or audio past 30 s. */
+  truncated: boolean;
+}
+
+interface Row {
+  prefix: Float32Array | null;
+  ids: number[];
+  markers: number[];
+  question: D1Question;
+  truncated: boolean;
+}
+
+// Rows per run are capped by rows × longest row, as d1's own batching (modeling_d1.py's _run) does.
+const MAX_TOKENS = 65536;
+
+/** Pack rows into runs of at most MAX_TOKENS padded positions, keeping their order. */
+export function packRows<R>(rows: R[], length: (r: R) => number, budget = MAX_TOKENS): R[][] {
+  const runs: R[][] = [];
+  let run: R[] = [];
+  let longest = 0;
+  for (const r of rows) {
+    const n = Math.max(longest, length(r));
+    if (run.length && (run.length + 1) * n > budget) {
+      runs.push(run);
+      run = [];
+      longest = 0;
+    }
+    run.push(r);
+    longest = Math.max(longest, length(r));
   }
-  const tokenize = (s: string) => Array.from(l.tok(s, { add_special_tokens: false }).input_ids.data, Number);
-  const rows = req.questions.map((q) => encodeQuestion(tokenize, req.state, q, maxLen, media));
+  if (run.length) runs.push(run);
+  return runs;
+}
+
+async function prefixOf(m: Manifest, l: Loaded, req: D1Request, opts: CommonOptions): Promise<{ prefix: Float32Array | null; truncated: boolean }> {
+  if (req.images?.length && req.audio) throw new UnsupportedInputError(`"${m.id}" takes images or audio in one request, not both.`);
+  if (req.images?.length) return { prefix: await imagePrefix(m, l, req.images, opts), truncated: false };
+  if (req.audio) return audioPrefix(m, l, req.audio, opts);
+  return { prefix: null, truncated: false };
+}
+
+/** The decide graph's inputs for rows, each prefix left-padded (masked) so it ends right before its text. */
+export function layoutRows(rows: readonly Pick<Row, 'prefix' | 'ids' | 'markers'>[]) {
   const B = rows.length;
   const T = Math.max(...rows.map((r) => r.ids.length));
   const K = Math.max(...rows.map((r) => r.markers.length));
+  // Text-only rows still pass one masked-out position; see scripts/export/d1_export.py.
+  const P = Math.max(1, ...rows.map((r) => (r.prefix ? r.prefix.length / HIDDEN : 0)));
   const ids = new BigInt64Array(B * T);
   const mask = new BigInt64Array(B * T);
   const markerPos = new BigInt64Array(B * K);
   const markerMask = new BigInt64Array(B * K);
+  const prefix = new Float32Array(B * P * HIDDEN);
+  const prefixMask = new BigInt64Array(B * P);
   rows.forEach((r, b) => {
     r.ids.forEach((id, i) => {
       ids[b * T + i] = BigInt(id);
@@ -314,29 +347,69 @@ export async function d1Decide(m: Manifest, opts: CommonOptions, req: D1Request)
       markerPos[b * K + k] = BigInt(p);
       markerMask[b * K + k] = 1n;
     });
+    if (r.prefix) {
+      const n = r.prefix.length / HIDDEN;
+      prefix.set(r.prefix, (b * P + P - n) * HIDDEN);
+      prefixMask.fill(1n, b * P + P - n, (b + 1) * P);
+    }
   });
-  // Text-only calls pass one masked-out prefix position; see scripts/export/d1_export.py.
-  const Pin = Math.max(P, 1);
-  const prefixData = new Float32Array(B * Pin * HIDDEN);
-  if (prefix) for (let b = 0; b < B; b++) prefixData.set(prefix, b * Pin * HIDDEN);
+  return { B, T, K, P, ids, mask, markerPos, markerMask, prefix, prefixMask };
+}
+
+/** One decide run over rows; returns each row's distribution over its options. */
+async function run(m: Manifest, l: Loaded, rows: Row[], temps: Record<string, number>): Promise<number[][]> {
+  const { B, T, K, P, ids, mask, markerPos, markerMask, prefix, prefixMask } = layoutRows(rows);
   const { ort } = l;
   const out = await serialize(`d1:${m.id}`, () =>
     l.decide.run({
       input_ids: new ort.Tensor('int64', ids, [B, T]),
       attention_mask: new ort.Tensor('int64', mask, [B, T]),
-      prefix: new ort.Tensor('float32', prefixData, [B, Pin, HIDDEN]),
-      prefix_mask: new ort.Tensor('int64', new BigInt64Array(B * Pin).fill(prefix ? 1n : 0n), [B, Pin]),
+      prefix: new ort.Tensor('float32', prefix, [B, P, HIDDEN]),
+      prefix_mask: new ort.Tensor('int64', prefixMask, [B, P]),
       marker_pos: new ort.Tensor('int64', markerPos, [B, K]),
       marker_mask: new ort.Tensor('int64', markerMask, [B, K]),
-      qtype: new ort.Tensor('int64', BigInt64Array.from(req.questions.map((q) => BigInt(QTYPE[q.type]))), [B]),
+      qtype: new ort.Tensor('int64', BigInt64Array.from(rows.map((r) => BigInt(QTYPE[r.question.type]))), [B]),
     }),
   );
   const logits = out.logits.data as Float32Array;
-  const probs = req.questions.map((q, b) => {
-    const n = rows[b].markers.length;
+  return rows.map((r, b) => {
+    const n = r.markers.length;
     // Learned temperatures calibrate text answers; image and audio answers use the softmax as trained.
-    const temp = media === 'text' ? temperatureOf(c.temperatures, q.type, n) : 1;
+    const temp = r.prefix ? 1 : temperatureOf(temps, r.question.type, n);
     return softmax(Array.from(logits.subarray(b * K, b * K + n), (z) => z / temp));
   });
-  return { probs, info };
+}
+
+/**
+ * Every request's answers, one per question. Each request's media are encoded once and shared by its questions,
+ * and the questions of all requests are packed into as few forward passes as the token budget allows.
+ */
+export async function d1Decide(m: Manifest, opts: CommonOptions, requests: D1Request[]): Promise<{ answers: D1Answer[][]; info: RunInfo }> {
+  const { value: l, info } = await loadD1(m, opts);
+  const c = m.config as unknown as D1Config;
+  const tokenize = (s: string) => Array.from(l.tok(s, { add_special_tokens: false }).input_ids.data, Number);
+  const perRequest: Row[][] = [];
+  for (const req of requests) {
+    const { prefix, truncated: mediaCut } = await prefixOf(m, l, req, opts);
+    const media: D1Media = req.images?.length ? 'image' : req.audio ? 'audio' : 'text';
+    const P = prefix ? prefix.length / HIDDEN : 0;
+    const maxLen = Math.min(media === 'image' ? c.imageTextLength : media === 'audio' ? c.audioTextLength : c.maxLength, c.maxLength - P);
+    if (maxLen < 64) {
+      throw new UnsupportedInputError(`The images take ${P} of the ${c.maxLength} positions.`, { hint: 'Send fewer or smaller images.' });
+    }
+    perRequest.push(
+      req.questions.map((question) => {
+        const e = encodeQuestion(tokenize, req.state, question, maxLen, media);
+        return { prefix, ids: e.ids, markers: e.markers, question, truncated: e.truncated || mediaCut };
+      }),
+    );
+  }
+  const probs: number[][] = [];
+  for (const batch of packRows(perRequest.flat(), (r) => (r.prefix ? r.prefix.length / HIDDEN : 1) + r.ids.length)) {
+    probs.push(...(await run(m, l, batch, c.temperatures)));
+  }
+  // packRows keeps order, so probs line up with the flattened rows.
+  let i = 0;
+  const answers = perRequest.map((rs) => rs.map((r) => ({ probs: probs[i++], truncated: r.truncated })));
+  return { answers, info };
 }

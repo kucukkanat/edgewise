@@ -1,4 +1,14 @@
-import { encodeQuestion, escapeDelimiters, pyJson, renderOptions, subsampledLength, temperatureOf } from '../../src/backends/d1.ts';
+import {
+  encodeQuestion,
+  escapeDelimiters,
+  layoutRows,
+  packRows,
+  pyJson,
+  renderOptions,
+  resizeWeights,
+  subsampledLength,
+  temperatureOf,
+} from '../../src/backends/d1.ts';
 import { ConfigError, UnsupportedInputError } from '../../src/core/errors.ts';
 import { mockModel } from '../../src/test/index.ts';
 import { boolean, choice, evaluate, label, score } from '../../src/verbs/evaluate.ts';
@@ -82,6 +92,83 @@ describe('d1 prompt encoding', () => {
     expect(() => encodeQuestion(chars, '', { type: 'choice', instructions: 'Which?', options }, 64, 'text')).toThrow(ConfigError);
   });
 
+  it('reports what it had to cut', () => {
+    const q = {
+      type: 'choice',
+      instructions: 'Which?',
+      options: [
+        ['a', 'first'],
+        ['b', 'second'],
+      ],
+    } as const;
+    expect(encodeQuestion(chars, 'short', q, 16384, 'text').truncated).toBe(false);
+    expect(encodeQuestion(chars, 'x'.repeat(500), q, 200, 'text').truncated).toBe(true);
+    const longOption = {
+      type: 'choice',
+      instructions: 'Which?',
+      options: [
+        ['a', 'y'.repeat(500)],
+        ['b', 'z'],
+      ],
+    } as const;
+    expect(encodeQuestion(chars, '', longOption, 16384, 'text').truncated).toBe(true);
+    const longInstructions = { type: 'noul', instructions: 'w'.repeat(500) } as const;
+    expect(encodeQuestion(chars, '', longInstructions, 16384, 'text').truncated).toBe(true);
+  });
+
+  it('packs rows into runs under the token budget, in order', () => {
+    const rows = [10, 10, 10, 30, 5];
+    const runs = packRows(rows, (r) => r, 40);
+    expect(runs).toEqual([[10, 10, 10], [30], [5]]);
+    expect(runs.flat()).toEqual(rows);
+    // A row longer than the budget still runs, alone.
+    expect(packRows([50, 1], (r) => r, 40)).toEqual([[50], [1]]);
+    expect(packRows([], (r: number) => r)).toEqual([]);
+  });
+
+  it('lays rows out with each prefix left-padded against its text', () => {
+    const emb = (n: number, v: number) => new Float32Array(n * 1024).fill(v);
+    const rows = [
+      { prefix: null, ids: [1, 2, 3], markers: [1] },
+      { prefix: emb(2, 7), ids: [4, 5], markers: [0, 1] },
+      { prefix: emb(3, 9), ids: [6], markers: [0] },
+    ];
+    const l = layoutRows(rows);
+    expect([l.B, l.T, l.K, l.P]).toEqual([3, 3, 2, 3]);
+    expect(Array.from(l.ids, Number)).toEqual([1, 2, 3, 4, 5, 0, 6, 0, 0]);
+    expect(Array.from(l.mask, Number)).toEqual([1, 1, 1, 1, 1, 0, 1, 0, 0]);
+    expect(Array.from(l.markerPos, Number)).toEqual([1, 0, 0, 1, 0, 0]);
+    expect(Array.from(l.markerMask, Number)).toEqual([1, 0, 1, 1, 1, 0]);
+    // Text-only: fully masked. Two media rows: padding first, so the media end right before the text.
+    expect(Array.from(l.prefixMask, Number)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 1]);
+    const at = (b: number, p: number) => l.prefix[(b * l.P + p) * 1024];
+    expect([at(0, 0), at(0, 2), at(1, 0), at(1, 1), at(1, 2), at(2, 0), at(2, 2)]).toEqual([0, 0, 0, 7, 7, 9, 9]);
+  });
+
+  it('gives a text-only batch one masked prefix position', () => {
+    const l = layoutRows([{ prefix: null, ids: [1], markers: [0] }]);
+    expect(l.P).toBe(1);
+    expect(Array.from(l.prefixMask, Number)).toEqual([0]);
+  });
+
+  it("matches PyTorch's antialiased bilinear resize weights", () => {
+    // F.interpolate(eye(16), mode='bilinear', antialias=True), first row; downscaling spreads a row over many inputs.
+    const two = [0.080357, 0.098214, 0.116071, 0.133929, 0.133929, 0.116071, 0.098214, 0.080357, 0.0625, 0.044643, 0.026786, 0.008929, 0, 0, 0, 0];
+    const w2 = resizeWeights(2);
+    two.forEach((v, j) => expect(w2[j]).toBeCloseTo(v, 5));
+    // The second row mirrors the first.
+    for (let j = 0; j < 16; j++) expect(w2[16 + j]).toBeCloseTo(w2[15 - j], 6);
+    const w24 = resizeWeights(24);
+    expect(Array.from(w24.subarray(0, 16))).toEqual([1, ...Array(15).fill(0)]);
+    for (const n of [2, 5, 16, 24, 64]) {
+      const w = resizeWeights(n);
+      for (let i = 0; i < n; i++) expect(w.subarray(i * 16, i * 16 + 16).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
+    }
+    // Same size: the identity.
+    const id = resizeWeights(16);
+    for (let i = 0; i < 16; i++) expect(id[i * 16 + i]).toBeCloseTo(1, 6);
+  });
+
   it('picks the learned temperature by type and option count', () => {
     const temps = { 'choice:2': 1.7, 'choice:3-5': 1.4, 'choice:6-10': 1.2, 'choice:11+': 1.3, 'noul:2': 1.6, score: 1 };
     expect(temperatureOf(temps, 'choice', 2)).toBe(1.7);
@@ -114,10 +201,26 @@ describe('evaluate with media', () => {
   });
 
   it('checks d1 questions before loading the model', async () => {
-    const q = (questions: Record<string, ReturnType<typeof boolean> | ReturnType<typeof label>>) =>
-      evaluate({ model: 'judge:omni', state: 's', allowPreview: true, questions });
+    const q = (questions: Record<string, ReturnType<typeof boolean> | ReturnType<typeof label>>) => evaluate({ model: 'judge:omni', state: 's', questions });
     await expect(q({ refund: boolean() })).rejects.toThrow(ConfigError);
     await expect(q({ kind: label() })).rejects.toThrow(UnsupportedInputError);
+  });
+
+  it('judges many items with the same questions', async () => {
+    const refunds = mockModel({ verb: 'evaluate', respond: ({ state }) => ({ refund: state.includes('money') ? 0.9 : 0.1 }) });
+    const { results } = await evaluate({
+      model: refunds,
+      items: [{ state: 'I want my money back' }, { state: 'Nice app' }, { images: px }],
+      questions: { refund: boolean({ true: 'asks for a refund' }) },
+    });
+    expect(results.map((r) => r.answers.refund.probability)).toEqual([0.9, 0.1, 0.1]);
+    expect((await evaluate({ model: refunds, items: [], questions: { refund: boolean({ true: 'refund' }) } })).results).toEqual([]);
+  });
+
+  it('keeps items and a top-level state apart', async () => {
+    const opts = { model: judge, items: [{ state: 'a' }], state: 'b', questions: { x: choice({ a: 'A', b: 'B' }) } };
+    await expect(evaluate(opts as never)).rejects.toThrow(ConfigError);
+    await expect(evaluate({ model: judge, items: [{}], questions: { x: choice({ a: 'A', b: 'B' }) } })).rejects.toThrow(ConfigError);
   });
 
   it('resolves judge:omni to a model that takes text, images and audio', async () => {

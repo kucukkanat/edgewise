@@ -54,6 +54,19 @@ function bars(el, rows) {
   el.innerHTML = rows.map(([label, v]) => `<div class="bar"><span>${esc(label)}</span><span class="t"><i style="width:${Math.max(1, v * 100)}%"></i></span><b>${v.toFixed(2)}</b></div>`).join('');
 }
 
+/** A red circle on white, for the d1 demo when no file is picked. */
+function samplePicture() {
+  const c = Object.assign(document.createElement('canvas'), { width: 256, height: 256 });
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, 256, 256);
+  g.fillStyle = '#e11';
+  g.beginPath();
+  g.arc(128, 128, 90, 0, Math.PI * 2);
+  g.fill();
+  return c;
+}
+
 const demos = {
   async generate(btn) {
     const { generate } = await lib;
@@ -71,6 +84,18 @@ const demos = {
     const r = await evaluate({ model: 'judge:router', state: $('#ev-in').value, questions: { lane: choice(lanes) }, onProgress: progress(btn) });
     bars($('#ev-out'), Object.entries(r.answers.lane.probabilities).sort((a, b) => b[1] - a[1]));
     done(btn, r.info.lane, t0);
+  },
+  async omni(btn) {
+    const { evaluate, choice } = await lib;
+    const answers = $('#om-opts').value.split(',').map((s) => s.trim()).filter(Boolean);
+    if (answers.length < 2) throw new Error('List at least two answers, separated by commas.');
+    const file = $('#om-file').files?.[0];
+    const media = file?.type.startsWith('audio/') ? { audio: file } : { images: file ?? samplePicture() };
+    const question = choice(Object.fromEntries(answers.map((a) => [a, ''])), { instructions: $('#om-q').value });
+    const t0 = performance.now();
+    const r = await evaluate({ model: 'judge:omni', ...media, questions: { answer: question }, onProgress: progress(btn) });
+    bars($('#om-out'), Object.entries(r.answers.answer.probabilities).sort((a, b) => b[1] - a[1]));
+    done(btn, r.info.answer, t0);
   },
   async embed(btn) {
     const { embed } = await lib;

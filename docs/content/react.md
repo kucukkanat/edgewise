@@ -63,7 +63,7 @@ function Chat() {
 | Hook | Returns |
 | --- | --- |
 | `useGenerate(opts)` | `{ text, result, isRunning, error, run(input?), stop }` |
-| `useEvaluate({ state, questions, debounceMs })` | `{ answers, confidence, pending, error }`, re-run as `state` changes |
+| `useEvaluate({ state, images, audio, questions, debounceMs })` | `{ answers, confidence, pending, error }`, re-run as `state` changes or different images or audio are passed |
 | `useEmbed({ model })` | `{ embed(text), pending }` |
 | `useSpeak({ model, voice })` | `{ speak(text), speaking, stop }` |
 | `usePaint({ model, size, steps })` | `{ run(prompt), result, preview, isRunning, stop }` |

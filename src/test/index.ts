@@ -1,3 +1,4 @@
+import type { AudioLike, ImageLike } from '../core/parts.ts';
 /**
  * Test helpers: mock models that answer instantly, so app logic can be unit-tested without downloads.
  * @module
@@ -15,6 +16,10 @@ export type MockGenerate = (input: {
 /** Per question name: a probability map for choice/score/boolean, or spans for spans(). */
 export type MockEvaluate = (input: {
   state: string;
+  /** The images and audio passed with the state, as received. */
+  images: ImageLike[];
+  audio?: AudioLike;
+  sampleRate?: number;
 }) => Record<string, Record<string, number> | number | { type: string; start: number; end: number; score?: number }[]>;
 
 export type MockEmbed = (input: { texts: string[] }) => Float32Array[] | number[][];

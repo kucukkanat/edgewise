@@ -13,7 +13,7 @@ import { capabilities, isRunnable, selectVariant, unload } from '../core/runtime
 import type { Capabilities, CommonOptions, Device, ModelRef, PartType } from '../core/types.ts';
 import { type Mic, type MicOptions, mic as openMic } from '../inputs/mic.ts';
 import { embed } from '../verbs/embed.ts';
-import { type EvaluateResult, evaluate, type Question } from '../verbs/evaluate.ts';
+import { type EvaluateOptions, type EvaluateResult, evaluate, type Question } from '../verbs/evaluate.ts';
 import { type ForecastResult, forecast, type SeriesInput } from '../verbs/forecast.ts';
 import { type GenerateOptions, type GenerateResult, generate } from '../verbs/generate.ts';
 import { type PaintOptions, type PaintResult, paint } from '../verbs/paint.ts';
@@ -242,16 +242,36 @@ export function useChat(o: GenOpts) {
   };
 }
 
-/** Evaluate questions whenever the state changes (debounced). */
-export function useEvaluate<Q extends Record<string, Question>>(o: CommonOptions & { model?: ModelRef; state: unknown; questions: Q; debounceMs?: number }) {
+// Stable ids for media objects, so a new array around the same images does not re-run the evaluation.
+const mediaIds = new WeakMap<object, number>();
+let nextMediaId = 0;
+function mediaKey(v: unknown): string {
+  if (v === undefined || v === null) return '';
+  if (Array.isArray(v)) return v.map(mediaKey).join(',');
+  if (typeof v !== 'object') return String(v);
+  let id = mediaIds.get(v);
+  if (id === undefined) {
+    id = ++nextMediaId;
+    mediaIds.set(v, id);
+  }
+  return `#${id}`;
+}
+
+/**
+ * Evaluate questions whenever the state, images or audio change (debounced).
+ * Images and audio count as changed when they are different objects.
+ */
+export function useEvaluate<Q extends Record<string, Question>>(o: Omit<EvaluateOptions<Q>, 'signal'> & { debounceMs?: number }) {
   const [res, setRes] = useState<EvaluateResult<Q> | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<EdgewiseError | null>(null);
-  const key = JSON.stringify(o.state ?? null);
+  const key = `${JSON.stringify(o.state ?? null)}|${mediaKey(o.images)}|${mediaKey(o.audio)}`;
   const optsRef = useRef(o);
   optsRef.current = o;
+  const hasMedia = (Array.isArray(o.images) ? o.images.length > 0 : o.images !== undefined) || o.audio !== undefined;
+  const ready = hasMedia || (o.state !== undefined && o.state !== null && o.state !== '');
   useEffect(() => {
-    if (o.state === undefined || o.state === '') return;
+    if (!ready) return;
     let live = true;
     setPending(true);
     const t = setTimeout(async () => {
@@ -272,7 +292,7 @@ export function useEvaluate<Q extends Record<string, Question>>(o: CommonOptions
       live = false;
       clearTimeout(t);
     };
-  }, [key, o.debounceMs]);
+  }, [key, ready, o.debounceMs]);
   return { answers: res?.answers ?? null, confidence: res?.confidence ?? null, pending, error };
 }
 

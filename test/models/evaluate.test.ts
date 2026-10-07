@@ -114,4 +114,52 @@ suite('evaluate · real models', () => {
     expect(r.answers.kind.choice).toBe('request');
     expect(r.answers.topic.choice).toBe('payments');
   });
+
+  it2(on(all, 'batches text, image and audio items with d1-omni'), async () => {
+    const a = await speak({ model: 'kokoro-82m', voice: 'af_heart', input: 'Hi, I was charged twice for my order. Please refund one of the payments.' });
+    const items = [
+      { state: 'I was charged twice for my order, please refund one of the payments.' },
+      { images: redDisc(256) },
+      { audio: a.samples, sampleRate: a.sampleRate },
+      { state: { message: 'The app crashes when I open settings.' } },
+    ];
+    const questions = {
+      kind: choice({ request: 'a request', greeting: 'a greeting only', joke: 'a joke' }, { instructions: 'What kind of input is this?' }),
+    };
+    const { results } = await evaluate({ model: 'd1-omni-600m', items, questions });
+    report(
+      'd1 batch',
+      results.map((r) => r.answers.kind),
+    );
+    expect(results).toHaveLength(items.length);
+    // Packed into shared passes, each item still gets the answer it gets alone.
+    for (const [i, item] of items.entries()) {
+      const alone = await evaluate({ model: 'd1-omni-600m', ...item, questions });
+      expect(results[i].answers.kind.choice).toBe(alone.answers.kind.choice);
+      for (const k of ['request', 'greeting', 'joke'] as const) {
+        expect(Math.abs(results[i].answers.kind.probabilities[k] - alone.answers.kind.probabilities[k])).toBeLessThan(0.05);
+      }
+    }
+  });
+
+  it2(on(all, 'reports truncated input with d1-omni'), async () => {
+    const long = 'payments, refunds, invoices, chargebacks and every other money matter '.repeat(20);
+    const r = await evaluate({
+      model: 'd1-omni-600m',
+      state: 'I was charged twice.',
+      questions: {
+        cut: choice({ billing: long, tech: 'bugs and crashes' }, { instructions: 'Which team should handle this?' }),
+        whole: choice({ billing: 'payments', tech: 'bugs' }, { instructions: 'Which team should handle this?' }),
+      },
+    });
+    expect(r.answers.cut.truncated).toBe(true);
+    expect(r.answers.whole.truncated).toBeUndefined();
+    expect(r.answers.cut.choice).toBe('billing');
+    // Audio: clips under 0.5 s are padded, clips over 30 s are cut and say so.
+    const tone = (seconds: number) => Float32Array.from({ length: seconds * 16000 }, (_, i) => 0.2 * Math.sin((2 * Math.PI * 220 * i) / 16000));
+    const kind = { kind: choice({ speech: 'speech', tone: 'a tone' }, { instructions: 'What is this sound?' }) };
+    const { results } = await evaluate({ model: 'd1-omni-600m', items: [{ audio: tone(0.2) }, { audio: tone(31) }], questions: kind });
+    expect(results[0].answers.kind.truncated).toBeUndefined();
+    expect(results[1].answers.kind.truncated).toBe(true);
+  });
 });

@@ -4,6 +4,7 @@ import { lfmRoute, lfmSpans } from '../backends/lfm.ts';
 import { toAudio, toRawImage } from '../backends/media.ts';
 import { mockEvaluate } from '../backends/mock.ts';
 import { getTransformers } from '../backends/transformers.ts';
+import { debug } from '../core/config.ts';
 import { ConfigError, UnsupportedInputError } from '../core/errors.ts';
 import type { AudioLike, ImageLike } from '../core/parts.ts';
 import { resolveManifest } from '../core/registry.ts';
@@ -85,28 +86,37 @@ export interface Span {
   score: number;
 }
 
-export type Answer<Q> =
-  Q extends ChoiceQuestion<infer K>
-    ? { choice: K; probabilities: Record<K, number>; fellBack: boolean; flagged?: boolean }
-    : Q extends ScoreQuestion<infer L>
-      ? { score: number; level: L; probabilities: Record<L, number>; flagged?: boolean }
-      : Q extends BooleanQuestion
-        ? { probability: number; flagged?: boolean }
-        : Q extends SpansQuestion
-          ? { spans: Span[]; flagged?: boolean }
-          : Q extends LabelQuestion
-            ? { label: string; probabilities: Record<string, number>; flagged?: boolean }
-            : never;
+/** Set on every answer kind. */
+export interface AnswerFlags {
+  /** Set when the question has a `threshold`; see the question builders. */
+  flagged?: boolean;
+  /**
+   * True when the model saw only part of the input: the state, instructions or an option cut to fit its
+   * context, or audio past 30 s. Reported by d1 models; others leave it unset.
+   */
+  truncated?: boolean;
+}
 
-export interface EvaluateOptions<Q extends Record<string, Question>> extends CommonOptions {
-  /** Default model for questions that do not name one. */
-  model?: ModelRef;
+export type Answer<Q> = AnswerFlags &
+  (Q extends ChoiceQuestion<infer K>
+    ? { choice: K; probabilities: Record<K, number>; fellBack: boolean }
+    : Q extends ScoreQuestion<infer L>
+      ? { score: number; level: L; probabilities: Record<L, number> }
+      : Q extends BooleanQuestion
+        ? { probability: number }
+        : Q extends SpansQuestion
+          ? { spans: Span[] }
+          : Q extends LabelQuestion
+            ? { label: string; probabilities: Record<string, number> }
+            : never);
+
+/** One thing to judge: a state, with images or audio, or the media alone. */
+export interface EvaluateItem {
   /**
    * What to judge: a string, or JSON (serialized with sorted keys; d1 models read it as JSON).
    * Optional when images or audio are the whole state.
    */
   state?: unknown;
-  questions: Q;
   /** Images to judge along with the state, in order. Needs a model that accepts images, such as d1-omni-600m. */
   images?: ImageLike | ImageLike[];
   /** One audio clip (up to 30 s) to judge along with the state. Needs a model that accepts audio. */
@@ -115,12 +125,36 @@ export interface EvaluateOptions<Q extends Record<string, Question>> extends Com
   sampleRate?: number;
 }
 
+interface EvaluateBase<Q extends Record<string, Question>> extends CommonOptions {
+  /** Default model for questions that do not name one. */
+  model?: ModelRef;
+  questions: Q;
+}
+
+export interface EvaluateOptions<Q extends Record<string, Question>> extends EvaluateBase<Q>, EvaluateItem {
+  items?: never;
+}
+
+export interface EvaluateManyOptions<Q extends Record<string, Question>> extends EvaluateBase<Q> {
+  /** Many things to judge with the same questions. d1 models answer them in as few passes as fit. */
+  items: EvaluateItem[];
+  state?: never;
+  images?: never;
+  audio?: never;
+  sampleRate?: never;
+}
+
 export interface EvaluateResult<Q extends Record<string, Question>> {
   answers: { [K in keyof Q]: Answer<Q[K]> };
   /** 1 minus normalized entropy per question: 1 when certain, 0 when spread evenly. */
   confidence: { [K in keyof Q]: number };
   /** Which model and device answered each question. */
   info: { [K in keyof Q]: RunInfo };
+}
+
+export interface EvaluateManyResult<Q extends Record<string, Question>> {
+  /** One result per item, in order. */
+  results: EvaluateResult<Q>[];
 }
 
 /** Serialize state deterministically: strings as-is, objects as sorted `key: value` lines. */
@@ -153,24 +187,44 @@ function matchesType(type: string, wanted?: string[]): boolean {
   });
 }
 
+interface Prepared {
+  item: EvaluateItem;
+  images: ImageLike[];
+  hasState: boolean;
+  media: PartType[];
+}
+
+function prepare(item: EvaluateItem): Prepared {
+  const images = item.images === undefined ? [] : Array.isArray(item.images) ? item.images : [item.images];
+  const media: PartType[] = [...(images.length ? (['image'] as const) : []), ...(item.audio !== undefined ? (['audio'] as const) : [])];
+  const hasState = item.state !== undefined && item.state !== null;
+  if (!hasState && !media.length) throw new ConfigError('evaluate() needs a state, images or audio.');
+  return { item, images, hasState, media };
+}
+
+/** The state as d1 was trained on it: JSON as JSON, and no state is "" with images and {} with audio. */
+function d1State(p: Prepared): string {
+  const { state, audio } = p.item;
+  return typeof state === 'string' ? state : p.hasState ? pyJson(state) : audio !== undefined ? '{}' : '';
+}
+
 /**
- * Ask typed questions about text or JSON and get probabilities back from small encoder models.
+ * Ask typed questions about text, JSON, images or speech and get probabilities back from small models.
+ * Pass `items` to judge many states with the same questions.
  * Questions naming different models run on those models; each question is scored independently.
  */
-export async function evaluate<Q extends Record<string, Question>>(options: EvaluateOptions<Q>): Promise<EvaluateResult<Q>> {
+export async function evaluate<Q extends Record<string, Question>>(options: EvaluateOptions<Q>): Promise<EvaluateResult<Q>>;
+export async function evaluate<Q extends Record<string, Question>>(options: EvaluateManyOptions<Q>): Promise<EvaluateManyResult<Q>>;
+export async function evaluate<Q extends Record<string, Question>>(
+  options: EvaluateOptions<Q> | EvaluateManyOptions<Q>,
+): Promise<EvaluateResult<Q> | EvaluateManyResult<Q>> {
   if (!Object.keys(options.questions ?? {}).length) throw new ConfigError('evaluate() needs at least one question.');
-  const images = options.images === undefined ? [] : Array.isArray(options.images) ? options.images : [options.images];
-  const media: PartType[] = [...(images.length ? (['image'] as const) : []), ...(options.audio !== undefined ? (['audio'] as const) : [])];
-  const hasState = options.state !== undefined && options.state !== null;
-  if (!hasState && !media.length) throw new ConfigError('evaluate() needs a state, images or audio.');
-  let text: string | undefined;
-  const stateText = () => {
-    text ??= stateToText(options.state);
-    return text;
-  };
-  const answers: Record<string, unknown> = {};
-  const confidence: Record<string, number> = {};
-  const info: Record<string, RunInfo> = {};
+  const many = options.items !== undefined;
+  if (many && [options.state, options.images, options.audio].some((v) => v !== undefined)) {
+    throw new ConfigError('Pass state, images and audio inside each item when you pass items.');
+  }
+  const items = (many ? (options.items as EvaluateItem[]) : [options as EvaluateItem]).map(prepare);
+  const media = [...new Set(items.flatMap((p) => p.media))];
   const common: CommonOptions = {
     signal: options.signal,
     onProgress: options.onProgress,
@@ -183,31 +237,53 @@ export async function evaluate<Q extends Record<string, Question>>(options: Eval
     if (!ref) throw new ConfigError(`Question "${name}" has no model. Pass model on evaluate() or on the question.`);
     return [name, q, resolveManifest(ref, { verb: 'evaluate', allowPreview: options.allowPreview, inputs: ['text', ...media] })];
   });
-  // d1 answers all of a model's questions in one pass, sharing the encoded media.
+  // d1 answers all of a model's questions over every item in as few passes as fit, sharing each item's media.
   const decided = new Map<string, Result>();
   const groups = new Map<string, [string, Question, Manifest][]>();
   for (const r of resolved) if (r[2].task === 'd1-decision') groups.set(r[2].id, [...(groups.get(r[2].id) ?? []), r]);
-  const t = groups.size && images.length ? await getTransformers() : undefined;
-  const raw = t ? await Promise.all(images.map((i) => toRawImage(t, i))) : undefined;
-  const audio = groups.size && options.audio !== undefined ? await toAudio(options.audio, options.sampleRate) : undefined;
-  // As d1 was trained: JSON as JSON, and no state is "" with images and {} with audio.
-  const state = typeof options.state === 'string' ? options.state : hasState ? pyJson(options.state) : audio ? '{}' : '';
-  for (const group of groups.values()) {
-    checkSignal(options.signal);
-    const m = group[0][2];
-    const { probs, info: i } = await d1Decide(m, common, { state, questions: group.map(([n, q]) => toD1(m, n, q)), images: raw, audio });
-    group.forEach(([name, q], k) => decided.set(name, fromProbs(q, probs[k], i)));
+  if (groups.size) {
+    const t = media.includes('image') ? await getTransformers() : undefined;
+    const decoded = await Promise.all(
+      items.map(async (p) => ({
+        images: t && p.images.length ? await Promise.all(p.images.map((i) => toRawImage(t, i))) : undefined,
+        audio: p.item.audio !== undefined ? await toAudio(p.item.audio, p.item.sampleRate) : undefined,
+      })),
+    );
+    for (const group of groups.values()) {
+      checkSignal(options.signal);
+      const m = group[0][2];
+      const questions = group.map(([n, q]) => toD1(m, n, q));
+      const requests = items.map((p, i) => ({ state: d1State(p), questions, ...decoded[i] }));
+      const { answers, info } = await d1Decide(m, common, requests);
+      answers.forEach((as, i) => {
+        group.forEach(([name, q], k) => {
+          decided.set(`${i}|${name}`, fromProbs(q, as[k].probs, info, as[k].truncated));
+        });
+      });
+    }
   }
-  for (const [name, q, m] of resolved) {
-    checkSignal(options.signal);
-    const r = decided.get(name) ?? (m.task === 'mock' ? mockAnswer(m, name, q, stateText()) : await answer(m, q, stateText(), common));
-    const a = r.answer as { flagged?: boolean } & Record<string, unknown>;
-    if (q.threshold !== undefined) a.flagged = flag(q, a, q.threshold);
-    answers[name] = a;
-    confidence[name] = r.confidence;
-    info[name] = r.info;
+  const results: EvaluateResult<Q>[] = [];
+  for (const [i, p] of items.entries()) {
+    const answers: Record<string, unknown> = {};
+    const confidence: Record<string, number> = {};
+    const info: Record<string, RunInfo> = {};
+    let text: string | undefined;
+    const stateText = () => {
+      text ??= p.hasState ? stateToText(p.item.state) : '';
+      return text;
+    };
+    for (const [name, q, m] of resolved) {
+      checkSignal(options.signal);
+      const r = decided.get(`${i}|${name}`) ?? (m.task === 'mock' ? mockAnswer(m, name, q, stateText(), p) : await answer(m, q, stateText(), common));
+      const a = r.answer as AnswerFlags & Record<string, unknown>;
+      if (q.threshold !== undefined) a.flagged = flag(q, a, q.threshold);
+      answers[name] = a;
+      confidence[name] = r.confidence;
+      info[name] = r.info;
+    }
+    results.push({ answers, confidence, info } as EvaluateResult<Q>);
   }
-  return { answers, confidence, info } as EvaluateResult<Q>;
+  return many ? { results } : results[0];
 }
 
 type Result = { answer: unknown; confidence: number; info: RunInfo };
@@ -233,7 +309,16 @@ function toD1(m: Manifest, name: string, q: Question): D1Question {
 }
 
 /** An answer from a distribution over the question's options (a boolean's as [false, true]). */
-function fromProbs(q: Question, probs: number[], info: RunInfo): Result {
+function fromProbs(q: Question, probs: number[], info: RunInfo, truncated: boolean): Result {
+  const r = answerOf(q, probs, info);
+  if (truncated) {
+    (r.answer as AnswerFlags).truncated = true;
+    debug(`"${info.model}" saw only part of the input for a ${q.kind}() question.`);
+  }
+  return r;
+}
+
+function answerOf(q: Question, probs: number[], info: RunInfo): Result {
   if (q.kind === 'boolean') return { answer: { probability: probs[1] }, confidence: confidenceOf(probs), info };
   if (q.kind === 'score') {
     const mean = probs.reduce((s, p, i) => s + p * i, 0);
@@ -257,8 +342,8 @@ function fromProbs(q: Question, probs: number[], info: RunInfo): Result {
   };
 }
 
-function mockAnswer(m: Manifest, name: string, q: Question, text: string): Result {
-  const { value, info } = mockEvaluate(m, name, text);
+function mockAnswer(m: Manifest, name: string, q: Question, text: string, p: Prepared): Result {
+  const { value, info } = mockEvaluate(m, name, text, { images: p.images, audio: p.item.audio, sampleRate: p.item.sampleRate });
   if (value === undefined) throw new ConfigError(`The mock model returned nothing for question "${name}".`);
   if (q.kind === 'boolean') {
     const p = typeof value === 'number' ? value : Number((value as Record<string, number>).true ?? 0);

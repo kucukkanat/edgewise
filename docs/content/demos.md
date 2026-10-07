@@ -25,6 +25,16 @@ These demos run the real library in your browser. Models download once from Hugg
 <div class="bars" id="ev-out"></div>
 </div>
 
+<div class="demo" id="demo-omni" data-testid="demo-omni">
+<h2 id="evaluate-media">evaluate: judge a photo or a voice clip</h2>
+<p>LiquidAI d1-omni answers a question about an image, or up to 30 s of speech, in one pass. Pick a file, or run it on the sample picture.</p>
+<input type="file" id="om-file" accept="image/*,audio/*" data-testid="omni-file">
+<textarea id="om-q" rows="1" data-testid="omni-question">What is shown?</textarea>
+<textarea id="om-opts" rows="1" data-testid="omni-answers">a red circle, a blue square, a cat, a car</textarea>
+<div class="demo-row"><button class="btn primary" data-run="omni" data-testid="omni-run">Run · ~730–790 MB</button><span class="demo-status" data-testid="omni-status"></span></div>
+<div class="bars" id="om-out" data-testid="omni-out"></div>
+</div>
+
 <div class="demo" id="demo-embed">
 <h2 id="embed-similarity">embed: similarity</h2>
 <p>MiniLM embeds each line; the bars show how close each is to the first.</p>

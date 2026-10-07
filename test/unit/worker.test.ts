@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AbortError, choice, SchemaValidationError, tool } from '../../src/index.ts';
+import { AbortError, choice, label, SchemaValidationError, tool } from '../../src/index.ts';
 import { connectWorker, type EdgewiseWorker, serveWorker } from '../../src/worker/index.ts';
 import { defineWorkerMocks } from '../fixtures/mocks.ts';
 
@@ -59,6 +59,24 @@ async function suiteFor(make: () => EdgewiseWorker | Promise<EdgewiseWorker>) {
     expect(m.embeddings[1]).toBeInstanceOf(Float32Array);
     const f = await ew.forecast({ model: 'wk:fc', series: [1, 2, 3, 4], horizon: 3 });
     expect(Array.from(f.median)).toEqual([0, 1, 2]);
+  });
+
+  it('sends images and audio to evaluate', async () => {
+    const q = { seen: label() };
+    const px = { data: new Uint8Array(12), width: 2, height: 2, channels: 3 as const };
+    const r = await ew.evaluate({ model: 'wk:media', state: 's', images: [px, px], audio: new Float32Array(800), sampleRate: 8000, questions: q });
+    expect(r.answers.seen.label).toBe('s|px2x2+px2x2|pcm800@8000');
+    const many = await ew.evaluate({ model: 'wk:media', items: [{ state: 'a', images: px }, { audio: new Float32Array(10) }], questions: q });
+    expect(many.results.map((x) => x.answers.seen.label)).toEqual(['a|px2x2|', '||pcm10@16000']);
+    if (typeof document !== 'undefined' && typeof AudioBuffer !== 'undefined') {
+      // DOM media become pixels and samples on the page side; the worker has no canvas or AudioBuffer.
+      const canvas = Object.assign(document.createElement('canvas'), { width: 3, height: 5 });
+      const buffer = new AudioBuffer({ length: 2400, numberOfChannels: 2, sampleRate: 24000 });
+      const dom = await ew.evaluate({ model: 'wk:media', images: canvas, audio: buffer, questions: q });
+      expect(dom.answers.seen.label).toBe('|px3x5|pcm2400@24000');
+      const items = await ew.evaluate({ model: 'wk:media', items: [{ audio: buffer }], questions: q });
+      expect(items.results[0].answers.seen.label).toBe('||pcm2400@24000');
+    }
   });
 
   it('speaks a streamed input and rebuilds SpeechAudio', async () => {

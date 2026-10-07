@@ -45,7 +45,6 @@ const photo = await evaluate({
     damaged: boolean({ instructions: 'Is the product damaged?' }),
     part: choice({ hinge: '', screen: '', keyboard: '' }, { instructions: 'Which part is shown?' }),
   },
-  allowPreview: true,
 });
 
 const voice = await evaluate({
@@ -53,11 +52,29 @@ const voice = await evaluate({
   state: { channel: 'support line' },
   audio: clip,                           // up to 30 s; Float32Array at 16 kHz, or pass sampleRate
   questions: { kind: choice({ request: 'a request', complaint: 'a complaint', chat: 'small talk' }, { instructions: 'What kind of utterance is this?' }) },
-  allowPreview: true,
 });
 ```
 
 One call takes images or audio, not both. The media are encoded once and every question is answered in one batched pass. Models that do not accept images or audio throw `UnsupportedInputError`.
+
+d1-omni's audio understanding is a research preview from LiquidAI, trained on English requests to an assistant. It reliably tells what kind of utterance a clip is, but can miss what the speaker asks for. Check it on your own clips before you rely on it.
+
+## Many items at once
+
+Pass `items` to ask the same questions about many states. Each item takes its own `state`, `images` or `audio`, and you get one result per item, in order. d1 models pack every question of every item into as few forward passes as fit, which is much faster than one call per item.
+
+```ts
+const { results } = await evaluate({
+  model: 'judge:omni',
+  items: tickets.map((t) => ({ state: t })),
+  questions: { lane: choice({ billing: 'payments', tech: 'bugs', chat: 'small talk' }, { instructions: 'Which team should handle this?' }) },
+});
+results.map((r) => r.answers.lane.choice);
+```
+
+## Truncated input
+
+Every model has a context limit. d1 answers carry `truncated: true` when the model saw only part of the input: a state, instructions or option cut to fit, or audio past 30 s. Its answer is still a decision about the part it saw. Other models leave `truncated` unset; NLI and classifier judges read the first 512 tokens.
 
 ## Question types
 
@@ -71,7 +88,7 @@ One call takes images or audio, not both. The media are encoded once and every q
 
 Answers are typed from the question: `answers.topic.choice` has type `'refund' | 'billing' | 'praise'`.
 
-Every question can set its own `model`, `threshold` and `instructions`. With a `threshold`, answers carry `flagged`: booleans, scores and spans are flagged when they reach it, and a choice falls back to `otherwise` (and is flagged) when its top probability is below it.
+Every question can set its own `model`, `threshold` and `instructions`. Answers can also carry `truncated` (see below). With a `threshold`, answers carry `flagged`: booleans, scores and spans are flagged when they reach it, and a choice falls back to `otherwise` (and is flagged) when its top probability is below it.
 
 ## How it works
 
@@ -98,7 +115,7 @@ Zero-shot probabilities are relative, not absolute. Before you gate on a thresho
 | `prompt-injection-deberta-v3` | boolean, label | alias `judge:injection` |
 | `bert-base-ner` | spans | alias `judge:entities`; PER, ORG, LOC, MISC |
 | `lfm2.5-encoder-350m-pii` | spans | alias `judge:pii`; LiquidAI PII detector, fine-grained types |
-| `d1-omni-600m` | choice, score, boolean | alias `judge:omni`; preview; LiquidAI decision model over text, images or speech. Its audio is a research preview, trained on English requests to an assistant |
+| `d1-omni-600m` | choice, score, boolean | alias `judge:omni`; LiquidAI decision model over text, images or speech, with calibrated probabilities. Audio is a research preview |
 | `piiranha-v1` | spans | preview; licence cc-by-nc-nd-4.0 (non-commercial) |
 
 For the full, current list see [Models](models).

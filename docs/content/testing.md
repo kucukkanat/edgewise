@@ -28,7 +28,7 @@ const caller = mockModel({ verb: 'generate', respond: ({ messages }) =>
   messages.some((m) => m.role === 'tool') ? 'Done.' : { toolCalls: [{ name: 'setVolume', input: { level: 30 } }] } });
 ```
 
-Mocks exist for `generate`, `evaluate`, `embed`, `speak` and `forecast`.
+Mocks exist for `generate`, `evaluate`, `embed`, `speak` and `forecast`. An `evaluate` mock's `respond` receives `{ state, images, audio, sampleRate }`, so you can test code that judges media.
 
 ## Testing with real models
 

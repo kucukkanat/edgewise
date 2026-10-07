@@ -474,7 +474,7 @@ export const builtinManifests: Manifest[] = [
     variants: [{ dtype: 'q8', devices: all(), bytes: 898 * MB }],
     params: '587M',
     license: 'lfm1.0',
-    status: 'preview',
+    status: 'stable',
     features: ['choice', 'score', 'boolean'],
     config: {
       tokenizer: { repo: 'LiquidAI/d1-omni-600M', revision: '02b55d7076f15129e59ab3f94783f32c4b088674' },

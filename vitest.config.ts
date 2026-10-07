@@ -6,7 +6,7 @@ const executablePath = process.env.CHROMIUM_PATH ?? (process.env.CI ? undefined 
 const browser = (include: string[], name: string, timeout: number, exclude: string[] = []) => ({
   extends: true as const,
   resolve: { conditions: ['source', 'browser', 'module', 'import', 'default'] },
-  optimizeDeps: { exclude: ['@huggingface/transformers', 'onnxruntime-web', 'phonemizer'] },
+  optimizeDeps: { exclude: ['@huggingface/transformers', 'onnxruntime-web', 'phonemizer'], include: ['react', 'react-dom/client'] },
   define: { __EDGEWISE_TEST_HUB__: JSON.stringify(process.env.EDGEWISE_TEST_HUB ?? '') },
   test: {
     name,

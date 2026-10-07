@@ -2,7 +2,8 @@
 
 Usage: python d1_parity.py <hf-dir> <onnx-dir> [suffix ...]   (suffix "" is fp32, "_q8", "_q4", ...)
 
-Builds inputs with d1's own prompt and media code, runs decide{suffix}.onnx (with vision and audio prefixes from
+Builds inputs with d1's own prompt and media code, runs decide{suffix}.onnx per case and once over every case
+(prefixes left-padded, as Edgewise batches them) (with vision and audio prefixes from
 vision{suffix}.onnx and audio{suffix}.onnx), and prints the largest probability gap and top-answer agreement against
 model.probabilities(). Also writes golden.json (token ids and reference probabilities) for the Edgewise test.
 """
@@ -90,7 +91,8 @@ def audio_prefix(s, clip):
     return x[:n]
 
 
-def onnx_probs(sessions, state, questions, images, clip):
+def build_rows(sessions, state, questions, images, clip):
+    """(prefix or None, ids, markers, question) per question, as model.probabilities_batch builds them."""
     cfg = model.config
     if images:
         prefix, max_len, noul, spoken = image_prefix(sessions["vision"], images), cfg.image_text_length, mod.YES_NO, False
@@ -99,32 +101,39 @@ def onnx_probs(sessions, state, questions, images, clip):
         state = {} if state is None else state
     else:
         prefix, max_len, noul, spoken = None, cfg.max_length, None, False
-    p = 0 if prefix is None else len(prefix)
-    max_len = min(max_len, cfg.max_length - p)
+    max_len = min(max_len, cfg.max_length - (0 if prefix is None else len(prefix)))
     qs = [prompt.as_question(q) for q in questions]
-    rows = [prompt.encode(tok, "" if state is None else state, q, max_len, noul, spoken) for q in qs]
-    B, T, K = len(rows), max(len(r[0]) for r in rows), max(len(r[1]) for r in rows)
+    return [(prefix, *prompt.encode(tok, "" if state is None else state, q, max_len, noul, spoken), q) for q in qs]
+
+
+def decide(session, rows):
+    """One decide run over rows; each prefix is left-padded (masked) to the longest, so it ends right before its
+    text and relative positions are unchanged. Text-only rows have an all-masked prefix."""
+    cfg = model.config
+    B, T, K = len(rows), max(len(r[1]) for r in rows), max(len(r[2]) for r in rows)
+    P = max([1] + [0 if r[0] is None else len(r[0]) for r in rows])
     feeds = {"input_ids": np.zeros((B, T), np.int64), "attention_mask": np.zeros((B, T), np.int64),
              "marker_pos": np.zeros((B, K), np.int64), "marker_mask": np.zeros((B, K), np.int64),
-             "qtype": np.array([prompt.QTYPES[q.type] for q in qs], np.int64)}
-    for b, (ids, markers) in enumerate(rows):
+             "prefix": np.zeros((B, P, 1024), np.float32), "prefix_mask": np.zeros((B, P), np.int64),
+             "qtype": np.array([prompt.QTYPES[r[3].type] for r in rows], np.int64)}
+    for b, (prefix, ids, markers, _) in enumerate(rows):
         feeds["input_ids"][b, : len(ids)] = ids
         feeds["attention_mask"][b, : len(ids)] = 1
         feeds["marker_pos"][b, : len(markers)] = markers
         feeds["marker_mask"][b, : len(markers)] = 1
-    pin = max(p, 1)
-    feeds["prefix"] = np.zeros((B, pin, 1024), np.float32) if prefix is None else np.repeat(prefix[None], B, 0)
-    feeds["prefix_mask"] = np.full((B, pin), 0 if prefix is None else 1, np.int64)
-    logits = sessions["decide"].run(None, feeds)[0]
+        if prefix is not None:
+            feeds["prefix"][b, P - len(prefix):] = prefix
+            feeds["prefix_mask"][b, P - len(prefix):] = 1
+    logits = session.run(None, feeds)[0]
     out = []
-    for b, q in enumerate(qs):
+    for b, (prefix, _, _, q) in enumerate(rows):
         z = logits[b, : q.options].astype(np.float64)
         if prefix is None:
             z = z / cfg.temperatures.get(prompt.temperature_key(q), cfg.temperatures.get(q.type, 1.0))
         e = np.exp(z - z.max())
         pr = (e / e.sum()).tolist()
         out.append(pr[::-1] if q.type == "noul" else pr)
-    return out, rows
+    return out
 
 
 golden = []
@@ -134,8 +143,17 @@ for name, state, questions, images, clip in cases:
 for suffix in suffixes:
     sessions = {n: session(n, suffix) for n in ("decide", "vision", "audio")}
     worst, agree, total = 0.0, 0, 0
+    built = {name: build_rows(sessions, state, questions, images, clip) for name, state, questions, images, clip in cases}
+    # Every case's questions in one run: text, image and audio rows padded together.
+    mixed = decide(sessions["decide"], [r for name in built for r in built[name]])
+    i = 0
+    for name in built:
+        for r, g in zip(refs[name], mixed[i:i + len(built[name])]):
+            worst = max(worst, max(abs(a - b) for a, b in zip(r, g)))
+        i += len(built[name])
+    print(f"  {suffix or 'fp32':5} mixed batch of {i} rows: worst gap so far {worst:.4f}")
     for name, state, questions, images, clip in cases:
-        got, rows = onnx_probs(sessions, state, questions, images, clip)
+        got = decide(sessions["decide"], built[name])
         for r, g in zip(refs[name], got):
             gap = max(abs(a - b) for a, b in zip(r, g))
             worst = max(worst, gap)
@@ -143,8 +161,8 @@ for suffix in suffixes:
             total += 1
             print(f"  {suffix or 'fp32':5} {name:9} gap={gap:.4f} ref={np.round(r, 3).tolist()} onnx={np.round(g, 3).tolist()}")
         if suffix == suffixes[0] and images is None and clip is None:
-            golden.append({"name": name, "state": state, "questions": questions, "ids": [r[0] for r in rows],
-                           "markers": [r[1] for r in rows], "probs": refs[name]})
+            golden.append({"name": name, "state": state, "questions": questions, "ids": [r[1] for r in built[name]],
+                           "markers": [r[2] for r in built[name]], "probs": refs[name]})
     print(f"{suffix or 'fp32'}: worst probability gap {worst:.4f}, top answer agrees on {agree}/{total}")
 json.dump(golden, open(f"{onnx_dir}/golden.json", "w"), ensure_ascii=False, indent=1)
 assert not math.isnan(worst)

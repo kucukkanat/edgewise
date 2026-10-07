@@ -327,6 +327,8 @@ table.models tr[hidden]{display:none}
 .demo h2{margin-top:14px}
 .demo textarea,.demo select{width:100%;font:14px var(--f-mono);background:var(--sunken);color:var(--ink);border:1px solid var(--line-2);border-radius:10px;padding:10px 12px;resize:vertical}
 .demo select{width:auto;padding:8px}
+.demo input[type=file]{display:block;margin:0 0 10px;font:13px var(--f-mono);color:var(--muted)}
+.demo textarea+textarea{margin-top:8px}
 .demo-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
 .demo-status{font:12.5px var(--f-mono);color:var(--muted)}
 .demo-out{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:12px 14px;min-height:44px;white-space:pre-wrap;font:13.5px/1.6 var(--f-mono);margin:0}
