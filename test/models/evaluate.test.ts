@@ -1,5 +1,5 @@
 import { route } from '../../src/helpers/index.ts';
-import { boolean, choice, evaluate, score, spans, speak } from '../../src/index.ts';
+import { boolean, choice, defineModel, evaluate, registry, score, spans, speak } from '../../src/index.ts';
 import { it2, on, redDisc, report, suite } from './setup.ts';
 
 const all = ['bun', 'node', 'browser'];
@@ -192,5 +192,15 @@ suite('evaluate · real models', () => {
     });
     report('d1-3b image', img.answers);
     expect(img.answers.shape.choice).toBe('circle');
+    // The same model with a 200-token context, to reach the state cut without a 32k-token pass.
+    const base = registry.get('d1-3b');
+    const short = defineModel({ ...base, id: 'd1-3b-short-context', config: { ...base.config, maxLength: 200 } });
+    const cut = await evaluate({
+      model: short,
+      state: `I was charged twice for my order, please refund one of the payments. ${'Order history line. '.repeat(80)}`,
+      questions: { refund: boolean({ instructions: 'Is the customer asking for a refund?' }) },
+    });
+    expect(cut.answers.refund.truncated).toBe(true);
+    expect(cut.answers.refund.probability).toBeGreaterThan(0.5);
   });
 });
