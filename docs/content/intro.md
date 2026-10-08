@@ -12,10 +12,13 @@ description: Edgewise runs language, vision, speech, judging, embedding, image a
 <p class="lede">Edgewise runs language, vision, speech, judging, embedding, image and forecasting models where your code runs: in the browser tab through WebGPU or WebAssembly, and in Bun or Node through ONNX Runtime, with <a href="https://github.com/vercel/vgpu">vgpu</a> for WebGPU on the server. You learn six functions, grouped by what they produce.</p>
 <div class="ctas"><a class="btn primary" href="quickstart.html">Quickstart</a><div class="install"><span>$</span>bun add edgewise<button class="copy" data-copy="bun add edgewise">Copy</button></div></div>
 </div>
+<div class="probe-wrap">
+<img class="perch" src="assets/raven.webp" alt="" width="163" height="160" data-testid="hero-raven">
 <div class="probe" aria-live="polite">
 <div class="probe-head">await capabilities()<span class="live"><i></i>your browser</span></div>
 <pre id="probeOut"><span class="c">// probing with the real library…</span></pre>
 <div class="probe-foot" id="probeFoot">This runs Edgewise's own <code>capabilities()</code> in your browser. Edgewise makes the same check before it downloads anything.</div>
+</div>
 </div>
 </div>
 

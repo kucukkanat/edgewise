@@ -6,6 +6,10 @@ order: 40
 
 # Changelog
 
+## Unreleased
+
+- A raven brand: a faceted raven mark as the favicon and logo, slate and amber colours across the docs and the playground, the raven on both heroes, the README and the 404 page, and a social preview card. `bun docs/brand.ts` rebuilds the images from `docs/brand/`.
+
 ## 0.3.0
 
 - `d1-omni-600m` (alias `judge:omni`): LiquidAI's open decision model. It answers `choice()`, `score()` and `boolean()` questions over text, images or speech in one forward pass, with calibrated probabilities. Exported to ONNX by Edgewise (8-bit, checked against the PyTorch original). Stable: real-model tests pass on Bun, Node and Chromium.

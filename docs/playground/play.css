@@ -1,12 +1,15 @@
 /* Edgewise playground — the homepage. Dark, immersive, one accent per verb. */
 :root{
   color-scheme:dark;
-  --bg:#06080B; --bg-2:#0A0E13; --panel:#0E131A; --panel-2:#121923; --raise:#18212D;
+  /* Raven palette: navy-slate surfaces; verbs keep their own colours. */
+  --bg:#070A10; --bg-2:#0A0F17; --panel:#0E1520; --panel-2:#131B28; --raise:#192333;
   --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.12); --line-3:rgba(255,255,255,.2);
   --ink:#EEF3F6; --ink-2:#B7C3CB; --muted:#7A8994; --faint:#4A5763;
   --generate:#3CE0C0; --evaluate:#FFB547; --embed:#A48BFF; --speak:#FF6FAE; --paint:#FF8A5B; --forecast:#5EB8FF; --vad:#8CE36B;
   --ok:#3CE0C0; --warn:#FFB547; --bad:#FF6B6B;
-  --grad:linear-gradient(100deg,#3CE0C0 0%,#5EB8FF 30%,#A48BFF 55%,#FF6FAE 80%,#FF8A5B 100%);
+  --grad:linear-gradient(100deg,#DCE6F2 0%,#9FB3CE 32%,#FFB13B 66%,#FF8A3D 100%);
+  --brand:#FFB13B;
+  --raven-n:#4A5E7E; --raven-d:#62789A; --raven-m:#8599B6; --raven-l:#A7B8CF; --raven-w:#DDE6F1; --raven-eye:#FFA62B;
   --f-display:"Schibsted Grotesk",ui-sans-serif,system-ui,sans-serif;
   --f-body:"Public Sans",ui-sans-serif,system-ui,sans-serif;
   --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
@@ -28,7 +31,7 @@ code,pre{font-family:var(--f-mono)}
 
 /* ---------- nav ---------- */
 .nav{position:fixed;inset:0 0 auto 0;z-index:40;height:64px;display:flex;align-items:center;gap:18px;padding:0 max(20px,env(safe-area-inset-left));transition:background .3s,border-color .3s,backdrop-filter .3s;border-bottom:1px solid transparent}
-.nav.solid{background:rgba(6,8,11,.72);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-bottom-color:var(--line)}
+.nav.solid{background:rgba(7,10,16,.72);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-bottom-color:var(--line)}
 .logo{display:flex;align-items:center;gap:10px;text-decoration:none}
 .logo b{font-family:var(--f-display);font-weight:800;font-size:20px;letter-spacing:-.03em}
 .ver{font-family:var(--f-mono);font-size:11px;color:var(--muted);border:1px solid var(--line-2);border-radius:99px;padding:2px 8px}
@@ -49,7 +52,7 @@ code,pre{font-family:var(--f-mono)}
 /* ---------- hero ---------- */
 .hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:center;padding:110px 20px 40px;overflow:hidden;isolation:isolate}
 #mesh{position:absolute;inset:0;width:100%;height:100%;z-index:-2}
-.hero-glow{position:absolute;inset:-20% -10% auto;height:90%;z-index:-1;background:radial-gradient(40% 50% at 25% 40%,rgba(60,224,192,.16),transparent 70%),radial-gradient(35% 45% at 75% 30%,rgba(164,139,255,.16),transparent 70%),radial-gradient(30% 40% at 60% 80%,rgba(255,111,174,.1),transparent 70%);filter:blur(10px);animation:drift 18s ease-in-out infinite alternate;pointer-events:none}
+.hero-glow{position:absolute;inset:-20% -10% auto;height:90%;z-index:-1;background:radial-gradient(40% 50% at 25% 40%,rgba(94,124,168,.18),transparent 70%),radial-gradient(35% 45% at 76% 28%,rgba(255,177,59,.13),transparent 70%),radial-gradient(30% 40% at 60% 80%,rgba(60,84,128,.14),transparent 70%);filter:blur(10px);animation:drift 18s ease-in-out infinite alternate;pointer-events:none}
 @keyframes drift{to{transform:translate3d(3%,4%,0) scale(1.08)}}
 .hero::after{content:"";position:absolute;inset:auto 0 0 0;height:200px;background:linear-gradient(transparent,var(--bg));z-index:-1;pointer-events:none}
 .hero-inner{width:100%;max-width:1240px;margin:0 auto;display:grid;grid-template-columns:1.25fr .9fr;gap:56px;align-items:center}
@@ -66,7 +69,7 @@ code,pre{font-family:var(--f-mono)}
 @keyframes rise{to{transform:none}}
 .headline .grad{animation:rise .9s var(--ease) forwards,shimmer 8s linear infinite}
 .strike{position:relative;color:var(--ink-2)}
-.strike::after{content:"";position:absolute;left:-2%;right:-2%;top:54%;height:.09em;background:var(--speak);border-radius:4px;transform:scaleX(0);transform-origin:left;animation:strike .6s var(--ease) 1.35s forwards;box-shadow:0 0 18px var(--speak)}
+.strike::after{content:"";position:absolute;left:-2%;right:-2%;top:54%;height:.09em;background:var(--brand);border-radius:4px;transform:scaleX(0);transform-origin:left;animation:strike .6s var(--ease) 1.35s forwards;box-shadow:0 0 18px var(--brand)}
 @keyframes strike{to{transform:scaleX(1)}}
 .lede{font-size:clamp(16px,1.6vw,19px);color:var(--ink-2);max-width:620px;margin:0 0 34px;line-height:1.6}
 .lede em{color:var(--ink);font-style:normal;font-weight:600}
@@ -576,3 +579,13 @@ details.adv .field{margin-top:10px}
   .compose .sec-head h2{font-size:32px}
   .play,.compose,.models,.start{padding:72px 14px}
 }
+
+/* ---------- raven brand ---------- */
+.raven-logo .n{fill:var(--raven-n)}.raven-logo .d{fill:var(--raven-d)}.raven-logo .m{fill:var(--raven-m)}
+.raven-logo .l{fill:var(--raven-l)}.raven-logo .w{fill:var(--raven-w)}.raven-logo .e{fill:var(--raven-eye)}
+/* The raven perches on the capabilities card: its feet rest on the card's top edge. */
+.device-wrap{position:relative;padding-top:192px}
+.device-wrap .perch{position:absolute;top:0;right:52px;z-index:2;height:200px;width:auto;pointer-events:none;filter:drop-shadow(0 14px 18px rgba(0,0,0,.5))}
+@media (max-width:1000px){.device-wrap{padding-top:140px}.device-wrap .perch{height:148px;right:28px}}
+/* An empty screen shows a faint raven above its hint; the 100px answer box is too short for it. */
+.screen.empty:not([style*="min-height:100px"])::after{content:"";position:absolute;left:50%;top:calc(50% - 74px);width:72px;height:67px;transform:translateX(-50%);background:url(../assets/raven-head.webp) center/contain no-repeat;opacity:.16;pointer-events:none}

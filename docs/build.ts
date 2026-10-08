@@ -258,7 +258,12 @@ function nav(pages: Page[], current: string): string {
   }).join('\n');
 }
 
-const LOGO = `<svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="8" fill="var(--accent)"/><path d="M9 22 L16 9 L23 22" fill="none" stroke="var(--accent-ink)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="16" cy="19" r="2.4" fill="var(--accent-ink)"/></svg>`;
+// The raven mark (docs/theme/icon.svg) inline, coloured by the theme's --raven-* tokens.
+const RAVEN_PATHS = `<path class="d" d="M.8 5.5 9.5 6.5 13 12 6 14.8 3.2 11.8 5.6 10.2 1.5 8.8 5 8z"/><path class="l" d="M9.5 6.5 20.5 8.8 18 10.5 13 12z"/><path class="m" d="M13 12 18 10.5 20.5 14.6 21.5 17.2 15 18.8z"/><path class="w" d="M18 10.5 20.5 8.8 31 14.2 20.5 14.6z"/><path class="m" d="M20.5 14.6 31 14.2 29.5 15.3 21.5 17.2z"/><path class="n" d="M15 18.8 21.5 17.2 19 26 12.5 29z"/><path class="d" d="M6 14.8 13 12 15 18.8 12.5 29 7.5 29.5 8.6 25 3.5 26.5 6.8 21.5z"/><circle class="e" cx="16.6" cy="12.8" r="1.25"/>`;
+const LOGO = `<svg class="raven-logo" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true">${RAVEN_PATHS}</svg>`;
+// Social cards need absolute URLs.
+const SITE = pkg.homepage.replace(/\/$/, '');
+
 
 function layout(p: Page, pages: Page[]): string {
   const i = pages.indexOf(p);
@@ -275,7 +280,19 @@ function layout(p: Page, pages: Page[]): string {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}">
+<meta name="theme-color" content="#F4F6F9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B1018" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Edgewise">
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(desc)}">
+<meta property="og:image" content="${SITE}/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A faceted raven beside the words: Six verbs for on-device AI.">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
@@ -364,6 +381,7 @@ for (const f of readdirSync(join(root, 'theme'))) if (!f.startsWith('old-')) cpS
     .replaceAll('{{ort-web}}', ORT_WEB)
     .replaceAll('{{importmap}}', IMPORT_MAP)
     .replaceAll('{{version}}', pkg.version)
+    .replaceAll('{{site}}', SITE)
     .replaceAll('{{models-json}}', JSON.stringify(modelsData()).replace(/</g, '\\u003c'));
   writeFileSync(join(out, 'index.html'), html);
   mkdirSync(join(out, 'play'), { recursive: true });
@@ -380,7 +398,7 @@ writeFileSync(
       order: 0,
       body: '',
       headings: [],
-      html: '<h1>Page not found</h1><p><a href="intro.html">Go to the introduction</a>.</p>',
+      html: '<div class="lost" data-testid="not-found"><img src="assets/raven-head.webp" alt="" width="220" height="204"><h1>This page flew off</h1><p>The link may be old, or the page moved. Try the <a href="intro.html">introduction</a>, or search the docs above.</p></div>',
       text: '',
     },
     pages,

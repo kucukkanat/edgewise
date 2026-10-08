@@ -1,3 +1,5 @@
+<p align="center"><img src="https://kucukkanat.github.io/edgewise/assets/raven-head.webp" alt="Edgewise: a faceted raven head with an amber eye" width="180"></p>
+
 # Edgewise
 
 **Six verbs for on-device AI in TypeScript.** Edgewise runs language, vision, speech, judging, embedding, image and forecasting models where your code runs: in the browser through WebGPU or WebAssembly, and in Bun or Node through ONNX Runtime, with [vgpu](https://github.com/vercel/vgpu) for WebGPU on the server.

@@ -1,12 +1,14 @@
 
 :root{
-  --bg:#F5F7F8; --surface:#FFFFFF; --sunken:#EDF1F2; --ink:#131A1E; --ink-2:#3A464D; --muted:#65737B;
-  --line:#DCE3E6; --line-2:#C9D3D7;
-  --accent:#0E7C6B; --accent-ink:#FFFFFF; --accent-soft:#DDF1EC; --accent-text:#0B6457;
+  /* Raven palette: slate and navy, with the eye's amber as the accent. */
+  --bg:#F4F6F9; --surface:#FFFFFF; --sunken:#ECF0F5; --ink:#121A27; --ink-2:#38465A; --muted:#627087;
+  --line:#DCE2EA; --line-2:#C8D1DD;
+  --accent:#F2A23A; --accent-ink:#1C1206; --accent-soft:#FCEFDC; --accent-text:#9A4F08;
+  --raven-n:#1B2536; --raven-d:#2C3B53; --raven-m:#4F6482; --raven-l:#A7B8CF; --raven-w:#DDE6F1; --raven-eye:#FFA62B;
   --amber:#A8660E; --amber-soft:#F8ECD8; --violet:#5B4FB5; --violet-soft:#E8E6F7; --red:#B4372F; --red-soft:#F7E1DE;
-  --code-bg:#0F1719; --code-ink:#D7E2E3; --code-line:#223034; --code-muted:#7D9296;
-  --tk-kw:#7FD6C4; --tk-str:#E6C07B; --tk-fn:#9CC4FF; --tk-num:#F2A97C; --tk-com:#6D8488; --tk-tag:#F29CB5; --tk-prop:#C8D8DA;
-  --shadow:0 1px 2px rgba(19,26,30,.05),0 6px 24px rgba(19,26,30,.06);
+  --code-bg:#0E1522; --code-ink:#D9E1EC; --code-line:#1F2B3D; --code-muted:#7E8CA3;
+  --tk-kw:#FFB866; --tk-str:#E6C07B; --tk-fn:#9CC4FF; --tk-num:#F2A97C; --tk-com:#6D8488; --tk-tag:#F29CB5; --tk-prop:#C8D8DA;
+  --shadow:0 1px 2px rgba(18,26,39,.05),0 6px 24px rgba(18,26,39,.07);
   --f-display:"Schibsted Grotesk",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-body:"Public Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -15,21 +17,23 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     color-scheme:dark;
-    --bg:#0D1214; --surface:#131A1D; --sunken:#182125; --ink:#E4EBED; --ink-2:#BCC8CC; --muted:#8B9A9F;
-    --line:#233036; --line-2:#2E3D44;
-    --accent:#3CC4AC; --accent-ink:#06201B; --accent-soft:#143530; --accent-text:#6BD9C4;
+    --bg:#0B1018; --surface:#111824; --sunken:#162030; --ink:#E6ECF4; --ink-2:#BAC6D6; --muted:#8794A8;
+    --line:#1F2A3A; --line-2:#2A3749;
+    --accent:#FFB13B; --accent-ink:#1F1405; --accent-soft:#33240F; --accent-text:#FFC266;
+    --raven-n:#4A5E7E; --raven-d:#62789A; --raven-m:#8599B6; --raven-l:#A7B8CF; --raven-w:#DDE6F1;
     --amber:#E3A34A; --amber-soft:#35291A; --violet:#A79CF0; --violet-soft:#26223F; --red:#EF8A80; --red-soft:#3A1F1C;
-    --code-bg:#0A0F11; --code-line:#1C282C;
+    --code-bg:#080D16; --code-line:#1B2636;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.35);
   }
 }
 :root[data-theme="dark"]{
   color-scheme:dark;
-  --bg:#0D1214; --surface:#131A1D; --sunken:#182125; --ink:#E4EBED; --ink-2:#BCC8CC; --muted:#8B9A9F;
-  --line:#233036; --line-2:#2E3D44;
-  --accent:#3CC4AC; --accent-ink:#06201B; --accent-soft:#143530; --accent-text:#6BD9C4;
+  --bg:#0B1018; --surface:#111824; --sunken:#162030; --ink:#E6ECF4; --ink-2:#BAC6D6; --muted:#8794A8;
+  --line:#1F2A3A; --line-2:#2A3749;
+  --accent:#FFB13B; --accent-ink:#1F1405; --accent-soft:#33240F; --accent-text:#FFC266;
+  --raven-n:#4A5E7E; --raven-d:#62789A; --raven-m:#8599B6; --raven-l:#A7B8CF; --raven-w:#DDE6F1;
   --amber:#E3A34A; --amber-soft:#35291A; --violet:#A79CF0; --violet-soft:#26223F; --red:#EF8A80; --red-soft:#3A1F1C;
-  --code-bg:#0A0F11; --code-line:#1C282C;
+  --code-bg:#080D16; --code-line:#1B2636;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
@@ -341,3 +345,15 @@ table.models tr[hidden]{display:none}
 .bars .bar .t{height:8px;border-radius:99px;background:var(--sunken)}
 .bars .bar b{font:12.5px var(--f-mono);text-align:right}
 @media (max-width:560px){.bars .bar{grid-template-columns:minmax(0,1fr) 90px 44px}}
+
+/* ---------- raven brand ---------- */
+.raven-logo .n{fill:var(--raven-n)}.raven-logo .d{fill:var(--raven-d)}.raven-logo .m{fill:var(--raven-m)}
+.raven-logo .l{fill:var(--raven-l)}.raven-logo .w{fill:var(--raven-w)}.raven-logo .e{fill:var(--raven-eye)}
+/* The raven perches on the capabilities card: its feet rest on the card's top edge. */
+.probe-wrap{position:relative;padding-top:150px}
+.perch{position:absolute;top:0;right:28px;z-index:1;height:160px;width:auto;pointer-events:none;filter:drop-shadow(0 10px 14px rgba(11,16,24,.22))}
+@media (max-width:560px){.probe-wrap{padding-top:112px}.perch{height:120px;right:16px}}
+/* 404 */
+.lost{text-align:center;padding:32px 0 48px}
+.lost img{width:min(220px,60vw);height:auto;margin:0 auto 8px;display:block}
+.lost h1{margin-top:0}

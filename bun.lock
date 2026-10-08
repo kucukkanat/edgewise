@@ -27,6 +27,7 @@
         "prismjs": "^1.30.0",
         "react": "^19.3.0",
         "react-dom": "^19.3.0",
+        "sharp": "0.35.4",
         "tsup": "^8.5.1",
         "typedoc": "^0.28.20",
         "typescript": "5",
