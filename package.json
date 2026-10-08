@@ -1,6 +1,6 @@
 {
   "name": "edgewise",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Six verbs for on-device AI in the browser, Bun and Node: generate, evaluate, embed, speak, paint, forecast.",
   "license": "MIT",
   "author": "Hilmi Tolga Sahin (https://github.com/kucukkanat)",

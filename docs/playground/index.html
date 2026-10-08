@@ -50,9 +50,9 @@
   <div class="hero-inner">
     <div class="hero-copy">
       <p class="kicker reveal"><span class="pulse"></span>Running in this tab · no server · no API key</p>
-      <h1 class="headline" aria-label="Six verbs. Thirty models. Zero servers.">
+      <h1 class="headline" aria-label="Six verbs. {{model-count-words}} models. Zero servers.">
         <span class="line"><span class="w">Six</span> <span class="w">verbs.</span></span>
-        <span class="line"><span class="w grad">Thirty</span> <span class="w grad">models.</span></span>
+        <span class="line"><span class="w grad" data-testid="model-count-words">{{model-count-words}}</span> <span class="w grad">models.</span></span>
         <span class="line"><span class="w">Zero</span> <span class="w strike">servers.</span></span>
       </h1>
       <p class="lede reveal">Edgewise runs language, vision, speech, judging, embedding, image and forecasting models <em>on the device</em>: in the browser through WebGPU or WebAssembly, and in Bun or Node. Right now, it can <span class="typer" id="typer">transcribe a meeting</span><span class="caret"></span></p>
@@ -102,7 +102,7 @@
 <section class="models" id="models">
   <div class="sec-head reveal">
     <p class="eyebrow">The registry</p>
-    <h2><span id="modelCount">30</span> models, <span class="grad">one API</span>.</h2>
+    <h2><span id="modelCount">{{model-count}}</span> models, <span class="grad">one API</span>.</h2>
     <p>Each model declares its verb, inputs, sizes and devices. The badge shows whether <em>this</em> device can run it. Click one to try it.</p>
   </div>
   <div class="filters reveal" id="filters"></div>

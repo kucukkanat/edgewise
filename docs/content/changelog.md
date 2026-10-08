@@ -6,8 +6,9 @@ order: 40
 
 # Changelog
 
-## Unreleased
+## 0.3.1
 
+- The playground headline spells out the registry's model count at build time (now thirty-two), and wraps on phones.
 - A raven brand: a faceted raven mark as the favicon and logo, slate and amber colours across the docs and the playground, the raven on both heroes, the README and the 404 page, and a social preview card. `bun docs/brand.ts` rebuilds the images from `docs/brand/`.
 
 ## 0.3.0

@@ -62,6 +62,8 @@ code,pre{font-family:var(--f-mono)}
 @keyframes ping{70%{box-shadow:0 0 0 10px rgba(60,224,192,0)}100%{box-shadow:0 0 0 0 rgba(60,224,192,0)}}
 .headline{font-family:var(--f-display);font-weight:900;font-size:clamp(42px,6.4vw,100px);line-height:.94;letter-spacing:-.045em;margin:0 0 28px}
 .headline .line{display:block;overflow:hidden;padding-bottom:.06em;white-space:nowrap}
+/* Long counts ("Thirty-two models.") wrap on phones instead of being cut off. */
+@media (max-width:560px){.headline .line{white-space:normal}}
 .headline .w{display:inline-block;transform:translateY(105%);animation:rise .9s var(--ease) forwards}
 .headline .line:nth-child(1) .w:nth-child(1){animation-delay:.05s}.headline .line:nth-child(1) .w:nth-child(2){animation-delay:.13s}
 .headline .line:nth-child(2) .w:nth-child(1){animation-delay:.24s}.headline .line:nth-child(2) .w:nth-child(2){animation-delay:.32s}

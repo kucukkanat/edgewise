@@ -22,6 +22,7 @@ import 'prismjs/components/prism-tsx.js';
 import 'prismjs/components/prism-bash.js';
 import 'prismjs/components/prism-json.js';
 import pkg from '../package.json' with { type: 'json' };
+import { countWords } from './words.ts';
 import { registry } from '../src/index.ts';
 
 const root = new URL('.', import.meta.url).pathname;
@@ -264,7 +265,6 @@ const LOGO = `<svg class="raven-logo" width="28" height="28" viewBox="0 0 32 32"
 // Social cards need absolute URLs.
 const SITE = pkg.homepage.replace(/\/$/, '');
 
-
 function layout(p: Page, pages: Page[]): string {
   const i = pages.indexOf(p);
   const link = (q: Page, cls: string, label: string) => `<a class="${cls}" href="${`${q.slug}.html`}"><small>${label}</small><b>${esc(q.title)}</b></a>`;
@@ -382,6 +382,9 @@ for (const f of readdirSync(join(root, 'theme'))) if (!f.startsWith('old-')) cpS
     .replaceAll('{{importmap}}', IMPORT_MAP)
     .replaceAll('{{version}}', pkg.version)
     .replaceAll('{{site}}', SITE)
+    // The headline counts the registry, so it stays right as models are added.
+    .replaceAll('{{model-count-words}}', countWords(modelsData().length))
+    .replaceAll('{{model-count}}', String(modelsData().length))
     .replaceAll('{{models-json}}', JSON.stringify(modelsData()).replace(/</g, '\\u003c'));
   writeFileSync(join(out, 'index.html'), html);
   mkdirSync(join(out, 'play'), { recursive: true });
