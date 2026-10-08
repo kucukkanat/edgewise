@@ -6,6 +6,10 @@ order: 40
 
 # Changelog
 
+## Unreleased
+
+- The playground keeps the open tab and example in the URL (`#try-embed/galaxy`), so a shared link opens the same one.
+
 ## 0.3.1
 
 - The playground headline spells out the registry's model count at build time (now thirty-two), and wraps on phones.

@@ -417,7 +417,15 @@ const pending = { model: null };
 const CASES = {};
 let current = null;
 
-function openVerb(verb, caseId) {
+/** `#try-<verb>/<example>` names the open tab and example, so a shared link opens the same one. */
+function fromHash(hash) {
+  if (!hash.startsWith('#try-')) return null;
+  const [verb, caseId] = decodeURIComponent(hash.slice(5)).split('/');
+  return CASES[verb] ? { verb, caseId } : null;
+}
+
+/** Open a verb's tab and one of its examples. `remember` writes it to the URL (without a new history entry). */
+function openVerb(verb, caseId, { remember = true } = {}) {
   const stage = $('#stage');
   stage.style.setProperty('--c', VERBS[verb].color);
   $$('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.verb === verb)));
@@ -431,6 +439,7 @@ function openVerb(verb, caseId) {
   panel.className = 'panel';
   slot.append(panel);
   current = pick.render(panel, slot) || {};
+  if (remember) window.history.replaceState(null, '', `#try-${verb}/${pick.id}`);
 }
 
 $('#tabs').innerHTML = Object.entries(VERBS)
@@ -3887,8 +3896,19 @@ renderGrid();
 
 /* =================================================================== start */
 
-openVerb('generate');
-if (location.hash.startsWith('#try-')) {
-  const [verb, c] = location.hash.slice(5).split('/');
-  if (CASES[verb]) (openVerb(verb, c), $('#play').scrollIntoView());
-}
+// A plain visit keeps a clean URL; a shared #try- link opens its tab and example.
+const shared = fromHash(location.hash);
+if (shared) {
+  openVerb(shared.verb, shared.caseId);
+  // The browser would restore the old scroll position, and fonts and the hero shift the layout while loading,
+  // so scroll now and again once the page has loaded.
+  window.history.scrollRestoration = 'manual';
+  const toPlay = () => $('#play').scrollIntoView({ behavior: 'instant' });
+  toPlay();
+  window.addEventListener('load', toPlay, { once: true });
+} else openVerb('generate', undefined, { remember: false });
+// Links to #try- anchors and hand-edited URLs switch tabs without a reload.
+window.addEventListener('hashchange', () => {
+  const t = fromHash(location.hash);
+  if (t) (openVerb(t.verb, t.caseId), $('#play').scrollIntoView());
+});
