@@ -6,7 +6,9 @@ order: 40
 
 # Changelog
 
-## 0.4.0
+## 0.4.1
+
+The first release of these changes: 0.4.0 was reserved by an interrupted publish and never reached npm.
 
 - Long audio: speech over 30 seconds is cut at its pauses into windows of up to 28 seconds (silent edges trimmed, silent windows skipped) and transcribed window by window. Moonshine used to take the whole file in one pass and lost text past about 30 seconds; Whisper now gets the same windows instead of its fixed strided chunks. Timestamps stay absolute.
 - `generate({ onSegment })` reports each finished window's segments and `{ done, total }` for progress bars; streamed runs get a `segment` event, and aborting stops between windows.
