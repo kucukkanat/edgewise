@@ -5,6 +5,9 @@
 
 import { toAudio } from '../backends/media.ts';
 import { type VadOptions, detectSpeech as vadDetect } from '../backends/vad.ts';
+
+export { type SplitOptions, splitOnSilence, type Window } from '../backends/stt.ts';
+
 import { ConfigError } from '../core/errors.ts';
 import type { AudioLike, ImageLike } from '../core/parts.ts';
 import { getPlatform } from '../core/runtime.ts';

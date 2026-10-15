@@ -408,8 +408,17 @@ export function connectWorker(worker: Worker | Port): EdgewiseWorker {
     generate<T>(options: GenerateOptions<T>) {
       return new Run<GenerateResult<T>, GenerateChunk<T>>(async (ctx) => {
         const schema = options.schema ? await toJsonSchema(options.schema) : undefined;
-        const args = { ...strip(options, 'signal', 'onProgress', 'tools', 'approve', 'schema'), ...(schema ? { schema: { jsonSchema: schema } } : {}) };
-        const r = await call<GenerateResult<T>>('generate', args, { ...runCtx(ctx, options), tools: options.tools, approve: options.approve as never });
+        const args = {
+          ...strip(options, 'signal', 'onProgress', 'onSegment', 'tools', 'approve', 'schema'),
+          ...(schema ? { schema: { jsonSchema: schema } } : {}),
+        };
+        const base = runCtx(ctx, options);
+        // onSegment cannot cross into the worker; the worker forwards each window as a `segment` event instead.
+        const onEvent = (e: RunEvent) => {
+          if (e.type === 'segment') options.onSegment?.(e.segments, { done: e.done, total: e.total });
+          base.onEvent(e);
+        };
+        const r = await call<GenerateResult<T>>('generate', args, { ...base, onEvent, tools: options.tools, approve: options.approve as never });
         if (options.schema && r.object !== undefined) {
           const v = validateWith(options.schema, r.object);
           if (!v.success) throw new SchemaValidationError(`The output did not match the schema: ${v.error}`, { raw: r.text, issues: v.issues });

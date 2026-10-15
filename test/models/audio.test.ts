@@ -53,6 +53,42 @@ suite('speak, STT and VAD · real models', () => {
     expect(r.text.toLowerCase()).toMatch(/hello/);
   });
 
+  it2(on(all, 'transcribes long audio window by window with progress and timestamps'), async () => {
+    const a = await hello();
+    const speech = resample(a.samples, a.sampleRate, 16000);
+    // 75 s: the sentence every 8 s, so Moonshine would be far past its ~30 s limit in one pass.
+    const clip = new Float32Array(16000 * 75);
+    for (let t = 1; t + 8 <= 75; t += 8) clip.set(speech.subarray(0, Math.min(speech.length, 16000 * 6)), t * 16000);
+    const progress: number[] = [];
+    const r = await generate({
+      model: 'moonshine-tiny',
+      input: { type: 'audio', audio: clip, sampleRate: 16000 },
+      timestamps: 'segment',
+      onSegment: (_s, p) => progress.push(p.done / p.total),
+    });
+    report('moonshine-tiny long', r.info);
+    expect(progress.length).toBeGreaterThan(2);
+    expect(progress.at(-1)).toBe(1);
+    expect((r.text.toLowerCase().match(/hello/g) ?? []).length).toBeGreaterThanOrEqual(6);
+    const starts = r.segments?.map((s) => s.start) ?? [];
+    expect(starts.length).toBeGreaterThan(2);
+    for (let i = 1; i < starts.length; i++) expect(starts[i]).toBeGreaterThan(starts[i - 1]);
+    expect(r.segments?.at(-1)?.end).toBeLessThanOrEqual(75);
+  });
+
+  it2(on(all, 'transcribes with Whisper base and timestamps'), async () => {
+    const a = await hello();
+    const r = await generate({
+      model: 'whisper-base',
+      input: { type: 'audio', audio: a.samples, sampleRate: a.sampleRate },
+      timestamps: 'segment',
+      language: 'en',
+    });
+    report('whisper-base', r.info);
+    expect(r.text.toLowerCase()).toMatch(/hello/);
+    expect(r.segments?.length).toBeGreaterThan(0);
+  });
+
   it2(on(all, 'finds speech with Silero VAD'), async () => {
     const a = await hello();
     const speech = resample(a.samples, a.sampleRate, 16000);

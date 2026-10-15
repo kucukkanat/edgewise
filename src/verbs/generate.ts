@@ -52,6 +52,11 @@ export interface GenerateOptions<T = unknown> extends CommonOptions {
   timestamps?: false | 'segment' | 'word';
   /** Speech models: spoken language, or 'auto'. */
   language?: string;
+  /**
+   * Speech models: audio over 30 s is cut at pauses and transcribed window by window. Called as each window
+   * finishes, with its segments in absolute seconds and how many windows are done, for progress bars.
+   */
+  onSegment?: (segments: Segment[], progress: { done: number; total: number }) => void;
   /** Maximum new tokens per step. Default 512. */
   maxTokens?: number;
   /** 0 (default) decodes greedily. Higher values sample. */
@@ -140,7 +145,16 @@ export function generate<T = unknown>(options: GenerateOptions<T>): Run<Generate
     // ---------------------------------------------------------------- speech to text
     if (m.task === 'speech-to-text') {
       if (options.tools || options.schema) throw new ConfigError('Speech models do not support tools or schema.');
-      const sttOpts = { timestamps: options.timestamps, language: options.language, signal, onText: emitText };
+      const sttOpts = {
+        timestamps: options.timestamps,
+        language: options.language,
+        signal,
+        onText: emitText,
+        onSegment: (segments: Segment[], progress: { done: number; total: number }) => {
+          options.onSegment?.(segments, progress);
+          ctx.event({ type: 'segment', segments, ...progress });
+        },
+      };
       if (norm.source) {
         const texts: string[] = [];
         let info: RunInfo | undefined;

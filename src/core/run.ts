@@ -11,6 +11,7 @@ export type RunEvent =
   | { type: 'utterance-end'; text: string }
   | { type: 'audio-chunk'; text: string; samples: number }
   | { type: 'step'; step: number; total: number }
+  | { type: 'segment'; segments: import('../backends/stt.ts').Segment[]; done: number; total: number }
   | { type: 'finish'; result: unknown };
 
 export interface RunContext<C> {

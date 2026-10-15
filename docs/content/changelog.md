@@ -8,6 +8,10 @@ order: 40
 
 ## Unreleased
 
+- Long audio: speech over 30 seconds is cut at its pauses into windows of up to 28 seconds (silent edges trimmed, silent windows skipped) and transcribed window by window. Moonshine used to take the whole file in one pass and lost text past about 30 seconds; Whisper now gets the same windows instead of its fixed strided chunks. Timestamps stay absolute.
+- `generate({ onSegment })` reports each finished window's segments and `{ done, total }` for progress bars; streamed runs get a `segment` event, and aborting stops between windows.
+- `whisper-base` (alias `stt:multilingual`, preview) and `whisper-small` (preview): multilingual transcription with timestamps at 73 MB and 237 MB on CPU.
+- `splitOnSilence()` in `edgewise/helpers`.
 - The playground keeps the open tab and example in the URL (`#try-embed/galaxy`), so a shared link opens the same one.
 
 ## 0.3.1

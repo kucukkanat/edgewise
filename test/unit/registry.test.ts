@@ -10,6 +10,8 @@ describe('registry', () => {
     expect(registry.get('text:default').id).toBe('lfm2.5-350m');
     expect(registry.get('embed:tiny').verb).toBe('embed');
     expect(registry.aliases()['forecast:default']).toBe('chronos-bolt-tiny');
+    expect(registry.aliases()['stt:multilingual']).toBe('whisper-base');
+    expect(registry.get('whisper-small').features).toContain('languages');
   });
 
   it('throws a helpful error for unknown models', () => {

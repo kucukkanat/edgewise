@@ -1,5 +1,6 @@
 import { cosine } from '../../src/helpers/index.ts';
 import { choice } from '../../src/index.ts';
+import { resample } from '../../src/platform/audio.ts';
 import { connectWorker, type EdgewiseWorker } from '../../src/worker/index.ts';
 import { it2, on, redDisc, report, suite, testConfig } from '../models/setup.ts';
 
@@ -31,6 +32,23 @@ suite('worker mode · real models', () => {
     for await (const d of run) text += d;
     expect(text).toMatch(/Paris/i);
     expect(loads).toContain('ready');
+  });
+
+  it2(on(['bun', 'browser'], 'reports long-audio progress from inside a Web Worker'), async () => {
+    const ew = await worker();
+    const a = await ew.speak({ model: 'kokoro-82m', input: 'Hello from Edgewise. This sentence was spoken on the device.' });
+    const speech = resample(a.samples, a.sampleRate, 16000);
+    const clip = new Float32Array(16000 * 45);
+    for (const t of [1, 20, 38]) clip.set(speech.subarray(0, Math.min(speech.length, 16000 * 6)), t * 16000);
+    const progress: string[] = [];
+    const r = await ew.generate({
+      model: 'moonshine-tiny',
+      input: { type: 'audio', audio: clip, sampleRate: 16000 },
+      onSegment: (_s, p) => progress.push(`${p.done}/${p.total}`),
+    });
+    expect(progress.length).toBeGreaterThan(1);
+    expect(progress.at(-1)).toMatch(/^(\d+)\/\1$/);
+    expect(r.text.toLowerCase()).toMatch(/hello/);
   });
 
   it2(on(['bun', 'browser'], 'judges an image with d1-omni inside a Web Worker'), async () => {
